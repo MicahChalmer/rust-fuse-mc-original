@@ -116,8 +116,8 @@ extern {
 
     // Workaround for the fact that we can't call into c via a function ptr right
     // from rust
-    fn call_filer_function(filler: cfuncptr, buf: *c_void, name: *c_char, stbuf: *stat,
-                           off: off_t);
+    fn call_filler_function(filler: cfuncptr, buf: *c_void, name: *c_char, stbuf: *stat,
+                           off: off_t) -> c_int;
 }
 
 // Used for return values from FS operations
@@ -133,26 +133,40 @@ pub struct dir_entry {
 
 pub trait FuseOperations {
     fn getattr(&self, path:&str, stbuf: &mut stat) -> errno;
-    fn readdir(&self, path:&str, info: &fuse_file_info, filler: fuse_fill_dir_func) -> errno;
+    fn readdir(&self, path:&str, filler: fuse_fill_dir_func,
+               offset: off_t, info: &fuse_file_info) -> errno;
     fn open(&self, path:&str, info: &mut fuse_file_info) -> errno;  // TODO: don't allow mutation of the whole fuse_file_info
     fn read(&self, path:&str, buf:&mut [u8], size: size_t, offset: off_t, info: &fuse_file_info) -> (errno, size_t);
 }
 
+unsafe fn get_context_ops() -> &~FuseOperations {
+    &((*(*fuse_get_context()).private_data).ops)
+}
+
 extern fn c_getattr(path: *c_char, stbuf: *mut stat) -> errno {
     unsafe {
-        let ops = &((*(*fuse_get_context()).private_data).ops);
+        let ops = get_context_ops();
         ptr::zero_memory(stbuf, 1);
         ops.getattr(str::raw::from_c_str(path), &mut *stbuf)
     }
 }
 
 extern fn c_readdir(path: *c_char, buf: *c_void, filler: cfuncptr,
-                    offset: off_t, fi: *fuse_file_info) {
+                    offset: off_t, fi: *fuse_file_info) -> c_int {
     unsafe {
-        
+        let ops = get_context_ops();
+        let fill_func = |name:&str, st:Option<stat>, ofs:off_t| -> c_int {
+                name.as_c_str(|c_name| {
+                        call_filler_function(filler, buf, c_name, match st {
+                                Some(ref s) => ptr::to_unsafe_ptr(s),
+                                None => ptr::null()
+                            }, ofs)
+                    })
+        };
+        ops.readdir(str::raw::from_c_str(path), fill_func, offset, &*fi)
     }
 }
 
-pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) {
+pub fn fuse_main<T: FuseOperations>(_args: ~[~str], _ops: ~T) {
     
 }
