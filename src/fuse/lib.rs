@@ -1,5 +1,4 @@
 #[link(name = "fuse",
-vers = "0.0.0",
 uuid = "d37c5c30-fdcd-459d-bfca-ebb8da04b2a0",
 url = "https://github.com/MicahChalmer/rust-fuse")];
 
@@ -7,18 +6,23 @@ url = "https://github.com/MicahChalmer/rust-fuse")];
 #[license = "MIT"];
 #[crate_type = "lib"];
 
-#[link_args = "-lfuse"] 
-
 use std::libc::{
     c_char,
     c_int,
     c_uint,
     c_ulong,
     c_void,
+    mode_t,
     off_t,
+    pid_t,
     size_t,
-    stat
+    stat,
+    uid_t,
+    gid_t
 };
+
+use std::ptr;
+use std::str;
 
 // A cfuncptr is used here to stand in for a C function pointer.
 // For this struct, see fuse.h
@@ -75,6 +79,7 @@ struct c_fuse_operations {
     flock: cfuncptr
 }
 
+// TODO: this should not be public
 pub struct fuse_file_info {
     flags: c_int,
     fh_old: c_ulong, // Old file handle, don't use
@@ -89,14 +94,36 @@ pub struct fuse_file_info {
     lock_owner: u64
 }
 
+struct c_fuse_context {
+    fuse: *c_void,
+    uid: uid_t,
+    gid: gid_t,
+    pid: pid_t,
+    private_data: *rust_fuse_data,  // we use this to know what object to call
+    umask: mode_t 
+}
+
+struct rust_fuse_data {
+    ops: ~FuseOperations
+}
+
 extern {
     fn fuse_main_real(argc:c_int, argv:**c_char, 
                       op:*c_fuse_operations, op_size: size_t,
                       user_data: *c_void);
+
+    fn fuse_get_context() -> *c_fuse_context;
+
+    // Workaround for the fact that we can't call into c via a function ptr right
+    // from rust
+    fn call_filer_function(filler: cfuncptr, buf: *c_void, name: *c_char, stbuf: *stat,
+                           off: off_t);
 }
 
 // Used for return values from FS operations
-type errno = int;
+type errno = c_int;
+
+type fuse_fill_dir_func<'self> = &'self fn (&'self str, Option<stat>, off_t) -> c_int;
 
 pub struct dir_entry {
     name: ~str,
@@ -105,12 +132,27 @@ pub struct dir_entry {
 }
 
 pub trait FuseOperations {
-    fn getattr(path:&str) -> Either<stat, errno>;
-    fn readdir(path:&str, info: &fuse_file_info) -> (errno, ~[~dir_entry]);
-    fn open(path:&str, info: &mut fuse_file_info) -> errno;  // TODO: don't allow mutation of the whole fuse_file_info
-    fn read(path:&str, buf:&mut [u8], size: size_t, offset: off_t, info: &fuse_file_info) -> (errno, size_t);
+    fn getattr(&self, path:&str, stbuf: &mut stat) -> errno;
+    fn readdir(&self, path:&str, info: &fuse_file_info, filler: fuse_fill_dir_func) -> errno;
+    fn open(&self, path:&str, info: &mut fuse_file_info) -> errno;  // TODO: don't allow mutation of the whole fuse_file_info
+    fn read(&self, path:&str, buf:&mut [u8], size: size_t, offset: off_t, info: &fuse_file_info) -> (errno, size_t);
+}
+
+extern fn c_getattr(path: *c_char, stbuf: *mut stat) -> errno {
+    unsafe {
+        let ops = &((*(*fuse_get_context()).private_data).ops);
+        ptr::zero_memory(stbuf, 1);
+        ops.getattr(str::raw::from_c_str(path), &mut *stbuf)
+    }
+}
+
+extern fn c_readdir(path: *c_char, buf: *c_void, filler: cfuncptr,
+                    offset: off_t, fi: *fuse_file_info) {
+    unsafe {
+        
+    }
 }
 
 pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) {
-
+    
 }
