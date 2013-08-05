@@ -9,12 +9,12 @@ DIRS = lib build
 
 OBJECTS=$(SRC:%.c=build/%.o)
 
-libs: dirs lib/lubfuserustwrapper.a
+libs: dirs lib/libfuserustwrapper.a
 
 dirs: $(DIRS)
 
 $(DIRS):
 	mkdir -p $@
 
-lib/lubfuserustwrapper.a: $(OBJECTS)
+lib/libfuserustwrapper.a: $(OBJECTS)
 	ar cr $@ $<
