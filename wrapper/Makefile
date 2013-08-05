@@ -1,9 +1,10 @@
 SRC = fuse_rust_wrapper.c
+CFLAGS += -fPIC -Wall -Wextra
 
 .PHONY: libs dirs
 
 build/%.o: %.c
-	$(CC) -c $(shell pkg-config --cflags fuse) -o $@ $<
+	$(CC) $(CFLAGS) -c $(shell pkg-config --cflags fuse) -o $@ $<
 
 DIRS = lib build
 

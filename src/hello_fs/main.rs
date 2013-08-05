@@ -33,7 +33,7 @@ impl FuseOperations for HelloFs {
                     st.st_nlink = 2;
                     st
                 }),
-            HELLO_FILE_FULLPATH => Result({
+            x if x == HELLO_FILE_FULLPATH => Result({
                     let mut st = default_stat();
                     // 292: octal 0444
                     st.st_mode = (S_IFREG | 292) as u32;
@@ -59,7 +59,7 @@ impl FuseOperations for HelloFs {
 
     fn open(&self, path:&str, info: &fuse_file_info) -> ErrorOrResult<errno, filehandle> {
         match path {
-            HELLO_FILE_FULLPATH => 
+            x if x == HELLO_FILE_FULLPATH => 
                 if info.flags & 3 != O_RDONLY { Error(EACCES) } else { Result(0) },
             _ => Error(ENOENT)
         }

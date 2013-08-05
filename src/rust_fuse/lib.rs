@@ -25,6 +25,7 @@ use std::ptr;
 use std::str;
 use std::vec;
 use std::sys::size_of;
+use std::cast;
 
 // A cfuncptr is used here to stand in for a C function pointer.
 // For this struct, see fuse.h
@@ -125,6 +126,8 @@ extern {
     // from rust
     fn call_filler_function(filler: cfuncptr, buf: *c_void, name: *c_char, stbuf: *stat,
                            off: off_t) -> c_int;
+
+    fn test_argc_argv(argc: c_int, argv: **c_char);
 }
 
 // Used for return values from FS operations
@@ -270,9 +273,12 @@ pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) -> int {
         flock: ptr::null()
     };
     unsafe {
-        let arg_c_strs = vec::raw::to_ptr(args.map(|s| vec::raw::to_ptr(s.as_bytes_with_null())));
-        fuse_main_real(args.len() as c_int, std::cast::transmute(arg_c_strs), 
+        let arg_c_strs_owner: ~[*u8] = args.map(|s| vec::raw::to_ptr(s.as_bytes_with_null()));
+        let arg_c_strs_ptr = vec::raw::to_ptr(arg_c_strs_owner);
+        cast::forget(arg_c_strs_owner);
+        test_argc_argv(args.len() as c_int, cast::transmute(arg_c_strs_ptr));
+        fuse_main_real(args.len() as c_int, cast::transmute(arg_c_strs_ptr), 
                        &cfo, size_of::<c_fuse_operations>() as size_t,
-                       std::cast::transmute(&ops))  as int
+                       cast::transmute(&ops))  as int
     }
 }
