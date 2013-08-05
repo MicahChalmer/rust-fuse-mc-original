@@ -109,12 +109,17 @@ struct rust_fuse_data {
     ops: ~FuseOperations
 }
 
+#[link_args = "-lfuse"]
 extern {
     fn fuse_main_real(argc:c_int, argv:**c_char, 
                       op:*c_fuse_operations, op_size: size_t,
                       user_data: *c_void) -> c_int;
 
     fn fuse_get_context() -> *c_fuse_context;
+}
+
+#[link_args = "-lfuserustwrapper -L../../wrapper/lib"]
+extern {
 
     // Workaround for the fact that we can't call into c via a function ptr right
     // from rust
