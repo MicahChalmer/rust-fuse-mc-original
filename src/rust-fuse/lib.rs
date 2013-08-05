@@ -1,4 +1,4 @@
-#[link(name = "fuse",
+#[link(name = "rust-fuse",
 uuid = "d37c5c30-fdcd-459d-bfca-ebb8da04b2a0",
 url = "https://github.com/MicahChalmer/rust-fuse")];
 
