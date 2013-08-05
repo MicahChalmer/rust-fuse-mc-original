@@ -23,6 +23,7 @@ use std::libc::{
 
 use std::ptr;
 use std::str;
+use std::vec;
 
 // A cfuncptr is used here to stand in for a C function pointer.
 // For this struct, see fuse.h
@@ -121,9 +122,11 @@ extern {
 }
 
 // Used for return values from FS operations
-type errno = c_int;
+pub type errno = c_int;
 
-type fuse_fill_dir_func<'self> = &'self fn (&'self str, Option<stat>, off_t) -> c_int;
+pub type fuse_fill_dir_func<'self> = &'self fn (&str, Option<stat>, off_t) -> c_int;
+
+pub type filehandle = u64;
 
 pub struct dir_entry {
     name: ~str,
@@ -131,12 +134,19 @@ pub struct dir_entry {
     off: off_t
 }
 
+#[deriving(Clone, Eq, ToStr)]
+pub enum ErrorOrResult<E, T> {
+    Error(E),
+    Result(T)
+}
+
 pub trait FuseOperations {
-    fn getattr(&self, path:&str, stbuf: &mut stat) -> errno;
+    fn getattr(&self, path:&str) -> ErrorOrResult<errno, stat>;
     fn readdir(&self, path:&str, filler: fuse_fill_dir_func,
-               offset: off_t, info: &fuse_file_info) -> errno;
-    fn open(&self, path:&str, info: &mut fuse_file_info) -> errno;  // TODO: don't allow mutation of the whole fuse_file_info
-    fn read(&self, path:&str, buf:&mut [u8], size: size_t, offset: off_t, info: &fuse_file_info) -> (errno, size_t);
+               offset: off_t, info: &fuse_file_info) -> ErrorOrResult<errno, ()>;
+    fn open(&self, path:&str, info: &mut fuse_file_info) -> ErrorOrResult<errno, filehandle>;
+    fn read(&self, path:&str, buf:&mut [u8], size: size_t, offset: off_t,
+            info: &fuse_file_info) -> ErrorOrResult<errno, c_int>;
 }
 
 unsafe fn get_context_ops() -> &~FuseOperations {
@@ -147,7 +157,17 @@ extern fn c_getattr(path: *c_char, stbuf: *mut stat) -> errno {
     unsafe {
         let ops = get_context_ops();
         ptr::zero_memory(stbuf, 1);
-        ops.getattr(str::raw::from_c_str(path), &mut *stbuf)
+        match ops.getattr(str::raw::from_c_str(path)) {
+            Error(e) => -e,
+            Result(st) => { ptr::copy_memory(stbuf, &st, 1); 0 }
+        }
+    }
+}
+
+unsafe fn option_to_ptr<T>(opt: Option<T>) -> *T {
+    match opt {
+        Some(ref t) => ptr::to_unsafe_ptr(t),
+        None => ptr::null()
     }
 }
 
@@ -155,18 +175,31 @@ extern fn c_readdir(path: *c_char, buf: *c_void, filler: cfuncptr,
                     offset: off_t, fi: *fuse_file_info) -> c_int {
     unsafe {
         let ops = get_context_ops();
-        let fill_func = |name:&str, st:Option<stat>, ofs:off_t| -> c_int {
-                name.as_c_str(|c_name| {
-                        call_filler_function(filler, buf, c_name, match st {
-                                Some(ref s) => ptr::to_unsafe_ptr(s),
-                                None => ptr::null()
-                            }, ofs)
-                    })
+        let fill_func: fuse_fill_dir_func = |name, st, ofs| -> c_int {
+            do name.as_c_str |c_name| {
+                call_filler_function(filler, buf, c_name, option_to_ptr(st), ofs)
+            }
         };
-        ops.readdir(str::raw::from_c_str(path), fill_func, offset, &*fi)
+        match ops.readdir(str::raw::from_c_str(path), fill_func, offset, &*fi) {
+            Error(e) => -e,
+            Result(_) => 0
+        }
     }
 }
 
-pub fn fuse_main<T: FuseOperations>(_args: ~[~str], _ops: ~T) {
+extern fn c_read(path: *c_char, buf: *mut u8, size: size_t, offset: off_t,
+                 fi: *fuse_file_info) -> c_int {
+    unsafe {
+        let ops = get_context_ops();
+        do vec::raw::mut_buf_as_slice(buf, size as uint) |slice| {
+            match ops.read(str::raw::from_c_str(path), slice, size, offset, &*fi) {
+                Error(e) => -e,
+                Result(sz) => sz
+            }
+        }
+    }
+}
+
+pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) {
     
 }
