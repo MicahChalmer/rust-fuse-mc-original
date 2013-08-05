@@ -216,7 +216,7 @@ extern fn c_read(path: *c_char, buf: *mut u8, size: size_t, offset: off_t,
     }
 }
 
-pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) -> c_int {
+pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) -> int {
     let cfo = c_fuse_operations {
         getattr: c_getattr,
         readdir: c_readdir,
@@ -273,6 +273,6 @@ pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) -> c_int {
         let arg_c_strs = vec::raw::to_ptr(args.map(|s| vec::raw::to_ptr(s.as_bytes_with_null())));
         fuse_main_real(args.len() as c_int, std::cast::transmute(arg_c_strs), 
                        &cfo, size_of::<c_fuse_operations>() as size_t,
-                       std::cast::transmute(&ops))
+                       std::cast::transmute(&ops))  as int
     }
 }
