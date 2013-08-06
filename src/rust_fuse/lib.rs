@@ -70,10 +70,8 @@ struct c_fuse_operations {
     utimens: cfuncptr,
     bmap: cfuncptr,
 
-    flag_nullpath_ok: uint,
-    flag_nopath: uint,
-    flag_utime_omit_ok: uint,
-    flag_reserved: uint,
+    // flag_nullpath_ok, flag_nopath, flag_utime_omit_ok, flag_reserved
+    flags: u32,
 
     ioctl: cfuncptr,
     poll: cfuncptr,
@@ -126,8 +124,6 @@ extern {
     // from rust
     fn call_filler_function(filler: cfuncptr, buf: *c_void, name: *c_char, stbuf: *stat,
                            off: off_t) -> c_int;
-
-    fn test_argc_argv(argc: c_int, argv: **c_char);
 }
 
 // Used for return values from FS operations
@@ -260,12 +256,7 @@ pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) -> int {
         lock: ptr::null(),
         utimens: ptr::null(),
         bmap: ptr::null(),
-
-        flag_nullpath_ok: 0,
-        flag_nopath: 0,
-        flag_utime_omit_ok: 0,
-        flag_reserved: 29,
-
+        flags:0,
         ioctl: ptr::null(),
         poll: ptr::null(),
         write_buf: ptr::null(),
@@ -276,7 +267,8 @@ pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) -> int {
         let arg_c_strs_owner: ~[*u8] = args.map(|s| vec::raw::to_ptr(s.as_bytes_with_null()));
         let arg_c_strs_ptr = vec::raw::to_ptr(arg_c_strs_owner);
         cast::forget(arg_c_strs_owner);
-        test_argc_argv(args.len() as c_int, cast::transmute(arg_c_strs_ptr));
+        // No need to destroy the memory for the program args--let them
+        // die with the process.
         fuse_main_real(args.len() as c_int, cast::transmute(arg_c_strs_ptr), 
                        &cfo, size_of::<c_fuse_operations>() as size_t,
                        cast::transmute(&ops))  as int
