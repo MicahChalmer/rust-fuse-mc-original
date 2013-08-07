@@ -26,20 +26,18 @@ struct HelloFs;
 impl FuseOperations for HelloFs {
     fn getattr(&self, path:&str) -> Result<stat, errno> {
         match path {
-            "/" => Ok({
-                    let mut st = default_stat();
+            "/" => Ok(stat{
                     // 493: octal 755.  Rust lacks octal literals
-                    st.st_mode = (S_IFDIR | 493) as u32;
-                    st.st_nlink = 2;
-                    st
+                    st_mode: (S_IFDIR | 493) as u32,
+                    st_nlink: 2,
+                    .. default_stat()
                 }),
-            x if x == HELLO_FILE_FULLPATH => Ok({
-                    let mut st = default_stat();
+            x if x == HELLO_FILE_FULLPATH => Ok(stat{
                     // 292: octal 0444
-                    st.st_mode = (S_IFREG | 292) as u32;
-                    st.st_nlink = 1;
-                    st.st_size = HELLO_STR.len() as i64;
-                    st
+                    st_mode: (S_IFREG | 292) as u32,
+                    st_nlink: 1,
+                    st_size: HELLO_STR.len() as i64,
+                    .. default_stat()
                 }),
             _ => Err(ENOENT)
         }
