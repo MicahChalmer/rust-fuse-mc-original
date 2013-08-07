@@ -197,8 +197,8 @@ extern fn c_read(path: *c_char, buf: *mut u8, size: size_t, offset: off_t,
         let ops = get_context_ops();
         do vec::raw::mut_buf_as_slice(buf, size as uint) |slice| {
             match ops.read(str::raw::from_c_str(path), slice, size, offset, &*fi) {
-                Error(e) => -e,
-                Result(sz) => sz
+                Err(e) => -e,
+                Ok(sz) => sz
             }
         }
     }
