@@ -26,6 +26,7 @@ use std::str;
 use std::vec;
 use std::sys::size_of;
 use std::cast;
+use std::Result;
 
 // A cfuncptr is used here to stand in for a C function pointer.
 // For this struct, see fuse.h
@@ -133,25 +134,13 @@ pub type fuse_fill_dir_func<'self> = &'self fn (&str, Option<stat>, off_t) -> c_
 
 pub type filehandle = u64;
 
-pub struct dir_entry {
-    name: ~str,
-    stat: Option<stat>,
-    off: off_t
-}
-
-#[deriving(Clone, Eq, ToStr)]
-pub enum ErrorOrResult<E, T> {
-    Error(E),
-    Result(T)
-}
-
 pub trait FuseOperations {
-    fn getattr(&self, path:&str) -> ErrorOrResult<errno, stat>;
+    fn getattr(&self, path:&str) -> Result<stat, errno>;
     fn readdir(&self, path:&str, filler: fuse_fill_dir_func,
-               offset: off_t, info: &fuse_file_info) -> ErrorOrResult<errno, ()>;
-    fn open(&self, path:&str, info: &fuse_file_info) -> ErrorOrResult<errno, filehandle>;
+               offset: off_t, info: &fuse_file_info) -> Result<(), errno>;
+    fn open(&self, path:&str, info: &fuse_file_info) -> Result<filehandle, errno>;
     fn read(&self, path:&str, buf:&mut [u8], size: size_t, offset: off_t,
-            info: &fuse_file_info) -> ErrorOrResult<errno, c_int>;
+            info: &fuse_file_info) -> Result<c_int, errno>;
 }
 
 unsafe fn get_context_ops() -> &~FuseOperations {
@@ -163,8 +152,8 @@ extern fn c_getattr(path: *c_char, stbuf: *mut stat) -> errno {
         let ops = get_context_ops();
         ptr::zero_memory(stbuf, 1);
         match ops.getattr(str::raw::from_c_str(path)) {
-            Error(e) => -e,
-            Result(st) => { ptr::copy_memory(stbuf, &st, 1); 0 }
+            Err(e) => -e,
+            Ok(st) => { ptr::copy_memory(stbuf, &st, 1); 0 }
         }
     }
 }
@@ -186,8 +175,8 @@ extern fn c_readdir(path: *c_char, buf: *c_void, filler: cfuncptr,
             }
         };
         match ops.readdir(str::raw::from_c_str(path), fill_func, offset, &*fi) {
-            Error(e) => -e,
-            Result(_) => 0
+            Err(e) => -e,
+            Ok(_) => 0
         }
     }
 }
@@ -196,8 +185,8 @@ extern fn c_open(path: *c_char, info: *mut fuse_file_info) -> c_int {
     unsafe {
         let ops = get_context_ops();
         match ops.open(str::raw::from_c_str(path), &*info) {
-            Error(e) => -e,
-            Result(fh) => { (*info).fh = fh; 0 }
+            Err(e) => -e,
+            Ok(fh) => { (*info).fh = fh; 0 }
         }   
     }
 }
