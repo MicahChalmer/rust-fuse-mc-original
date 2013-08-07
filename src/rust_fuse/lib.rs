@@ -204,7 +204,7 @@ extern fn c_read(path: *c_char, buf: *mut u8, size: size_t, offset: off_t,
     }
 }
 
-pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) -> int {
+pub fn fuse_main(args: ~[~str], ops: ~FuseOperations) -> int {
     let cfo = c_fuse_operations {
         getattr: c_getattr,
         readdir: c_readdir,
@@ -255,11 +255,10 @@ pub fn fuse_main<T: FuseOperations>(args: ~[~str], ops: ~T) -> int {
     unsafe {
         let arg_c_strs_owner: ~[*u8] = args.map(|s| vec::raw::to_ptr(s.as_bytes_with_null()));
         let arg_c_strs_ptr = vec::raw::to_ptr(arg_c_strs_owner);
-        cast::forget(arg_c_strs_owner);
-        // No need to destroy the memory for the program args--let them
-        // die with the process.
+//        cast::forget(arg_c_strs_owner);
+
         fuse_main_real(args.len() as c_int, cast::transmute(arg_c_strs_ptr), 
                        &cfo, size_of::<c_fuse_operations>() as size_t,
-                       cast::transmute(&ops))  as int
+                       cast::transmute(~rust_fuse_data{ ops: ops }))  as int
     }
 }

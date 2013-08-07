@@ -76,5 +76,5 @@ impl FuseOperations for HelloFs {
 }
 
 fn main() {
-    std::os::set_exit_status(fuse_main(os::args(), ~HelloFs))
+    std::os::set_exit_status(fuse_main(os::args(), ~HelloFs as ~FuseOperations))
 }
