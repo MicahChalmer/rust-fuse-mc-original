@@ -1,6 +1,7 @@
-#[link(name = "rust_fuse",
+#[link(name = "rust-fuse",
 uuid = "d37c5c30-fdcd-459d-bfca-ebb8da04b2a0",
-url = "https://github.com/MicahChalmer/rust-fuse")];
+url = "https://github.com/MicahChalmer/rust-fuse",
+vers = "dev")];
 
 #[comment = "FUSE bindings"];
 #[license = "MIT"];
@@ -118,13 +119,13 @@ extern {
     fn fuse_get_context() -> *c_fuse_context;
 }
 
-#[link_args = "-lfuserustwrapper -L../../wrapper/lib"]
+#[link_args = "-lfuserustwrapper -Lwrapper/lib"]
 extern {
 
-    // Workaround for the fact that we can't call into c via a function ptr right
-    // from rust
-    fn call_filler_function(filler: cfuncptr, buf: *c_void, name: *c_char, stbuf: *stat,
-                           off: off_t) -> c_int;
+    // Workaround for the fact that we can't call into c via a function ptr
+    // right from rust
+    fn call_filler_function(filler: cfuncptr, buf: *c_void, name: *c_char,
+                            stbuf: *stat, off: off_t) -> c_int;
 }
 
 // Used for return values from FS operations
