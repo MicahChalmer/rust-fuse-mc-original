@@ -4,7 +4,7 @@ This is an interface to write a [FUSE](http://fuse.sourceforge.net/) filesystem 
 
 # WORK IN PROGRESS
 
-At this point all you can do with this is compile and runs a rust version of the "hello world" filesystem that comes with FUSE as a tutorial.  At least, you can do that on MY machine.  I don't know if it works anywhere else.
+At this point all you can do with this is compile and run a rust version of the "hello world" filesystem that comes with FUSE as a tutorial.  At least, you can do that on MY machine.  I don't know if it works anywhere else.
 
 Only the few functions needed for hello_fs are even implemented at this point.  A rough sketch of what would be needed to make this actually useful:
 
@@ -19,4 +19,4 @@ This is a curiosity project for me.  No actual need to use it is motivating me t
 
 Build it with [rustpkg](https://github.com/mozilla/rust/blob/master/doc/rustpkg.md).  `rust_fuse` is the interface library and `hello_fs` is the aforementioned "hello world" filesystem that uses it.
 
-I'm using the nightly builds of Rust as pulled from the [Ubuntu PPA](https://launchpad.net/%7Ehansjorg/+archive/rust), which tracks the `master` branch.
+I'm using the nightly builds of Rust as pulled from the [Ubuntu PPA](https://launchpad.net/%7Ehansjorg/+archive/rust), which tracks the `master` branch of rust.
