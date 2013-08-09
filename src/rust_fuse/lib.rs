@@ -1,4 +1,4 @@
-#[link(name = "rust-fuse",
+#[link(name = "rust_fuse",
 uuid = "d37c5c30-fdcd-459d-bfca-ebb8da04b2a0",
 url = "https://github.com/MicahChalmer/rust-fuse",
 vers = "dev")];
@@ -119,6 +119,15 @@ extern {
     fn fuse_get_context() -> *c_fuse_context;
 }
 
+#[link_args = "-lfuserustwrapper -Lwrapper/lib"]
+extern {
+
+    // Workaround for the fact that we can't call into c via a function ptr
+    // right from rust
+    fn call_filler_function(filler: cfuncptr, buf: *c_void, name: *c_char,
+                            stbuf: *stat, off: off_t) -> c_int;
+}
+
 // Used for return values from FS operations
 pub type errno = c_int;
 
@@ -157,14 +166,13 @@ unsafe fn option_to_ptr<T>(opt: Option<T>) -> *T {
     }
 }
 
-type c_fill_function = *extern "C" fn (*c_void, *c_char, *stat, off_t) -> c_int;
-extern fn c_readdir(path: *c_char, buf: *c_void, filler: c_fill_function,
+extern fn c_readdir(path: *c_char, buf: *c_void, filler: cfuncptr,
                     offset: off_t, fi: *fuse_file_info) -> c_int {
     unsafe {
         let ops = get_context_ops();
         let fill_func: fuse_fill_dir_func = |name, st, ofs| -> c_int {
             do name.as_c_str |c_name| {
-                (*filler)(buf, c_name, option_to_ptr(st), ofs)
+                call_filler_function(filler, buf, c_name, option_to_ptr(st), ofs)
             }
         };
         match ops.readdir(str::raw::from_c_str(path), fill_func, offset, &*fi) {

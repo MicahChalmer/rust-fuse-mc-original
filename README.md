@@ -15,8 +15,12 @@ Only the few functions needed for hello_fs are even implemented at this point.  
 
 This is a curiosity project for me.  No actual need to use it is motivating me to develop it.  My only motivation was curiosity about both Rust and FUSE--by developing an interface between them I figured I could learn about both.  Consider yourself warned.
 
+Calling through C function pointers still doesn't work (see mozilla/rust#6194 and mozilla/rust#3678).  This makes it necessary to use my own C shim to be able to call a function pointer that fuse passes us.  I'm not particularly concerned with this as it is a temporary stopgap--once Rust fixes up its FFI to be able to call C functions through C function pointers it will no longer be necessary.
+
 # BUILDING
 
-Build it with [rustpkg](https://github.com/mozilla/rust/blob/master/doc/rustpkg.md).  `rust_fuse` is the interface library and `hello_fs` is the aforementioned "hello world" filesystem that uses it.
+To build the C shim, run `make` inside the `wrapper` directory.  I did not bother trying to make rustpkg do this, so you have to do it yourself before building the rust code.
+
+Build the rust code with [rustpkg](https://github.com/mozilla/rust/blob/master/doc/rustpkg.md).  `rust_fuse` is the interface library and `hello_fs` is the aforementioned "hello world" filesystem that uses it.
 
 I'm using the nightly builds of Rust as pulled from the [Ubuntu PPA](https://launchpad.net/%7Ehansjorg/+archive/rust), which tracks the `master` branch of rust.
