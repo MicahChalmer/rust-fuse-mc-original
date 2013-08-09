@@ -102,12 +102,8 @@ struct c_fuse_context {
     uid: uid_t,
     gid: gid_t,
     pid: pid_t,
-    private_data: *rust_fuse_data,  // we use this to know what object to call
+    private_data: *~FuseOperations,  // we use this to know what object to call
     umask: mode_t 
-}
-
-struct rust_fuse_data {
-    ops: ~FuseOperations
 }
 
 #[link_args = "-lfuse"]
@@ -145,7 +141,7 @@ pub trait FuseOperations {
 }
 
 unsafe fn get_context_ops() -> &~FuseOperations {
-    &((*(*fuse_get_context()).private_data).ops)
+    cast::transmute((*fuse_get_context()).private_data)
 }
 
 extern fn c_getattr(path: *c_char, stbuf: *mut stat) -> errno {
@@ -260,6 +256,6 @@ pub fn fuse_main(args: ~[~str], ops: ~FuseOperations) -> int {
 
         fuse_main_real(args.len() as c_int, cast::transmute(arg_c_strs_ptr), 
                        &cfo, size_of::<c_fuse_operations>() as size_t,
-                       cast::transmute(~rust_fuse_data{ ops: ops }))  as int
+                       cast::transmute(&ops))  as int
     }
 }
