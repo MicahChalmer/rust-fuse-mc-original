@@ -6,16 +6,18 @@ This is an interface to write a [FUSE](http://fuse.sourceforge.net/) filesystem 
 
 At this point all you can do with this is compile and run a rust version of the "hello world" filesystem that comes with FUSE as a tutorial.  At least, you can do that on MY machine.  I don't know if it works anywhere else.
 
-Only the few functions needed for hello_fs are even implemented at this point.  A rough sketch of what would be needed to make this actually useful:
+Only the few functions needed for hello_fs are even implemented at this point.
 
-  1. Finish covering the high-level API (i.e. what's available from `fuse.h`)
-  2. Make the API more in the spirit of Rust--don't pass around mutable references to whole structures just to look for changes to one field, etc.
-  3. A test suite would be needed.  Maybe something based on Vagrant or Docker so it doesn't need a lot of setup on the machine just to run...
-  4. Cover the low-level API with all of the above
+As per some helpful discussion on the Rust mailing list, the high level FUSE API is pretty much incompatible with rust as it currently stands.  Rust's std I/O does not work when called from a thread that wasn't started as a rust task.  So it'll have to be the low-level API from the get-go.  New plan:
+
+  1. Switch to low-level API and write another "hello world" based on hello_ll.c from FUSE
+  2. Try to cover the rest of the API.  Make a very thin wrapper, just enough to be useful without unsafe blocks.  Create a test FS that just puts files into its own in-memory data structures using that, and get it to pass some filesystem tests.
+  3. Change/wrap the thin wrapper with something that is more rust-y.  Try to get rust's type system to enforce the constraints that in the FUSE documentation are just comments.
+
 
 This is a curiosity project for me.  No actual need to use it is motivating me to develop it.  My only motivation was curiosity about both Rust and FUSE--by developing an interface between them I figured I could learn about both.  Consider yourself warned.
 
-Calling through C function pointers still doesn't work (see mozilla/rust#6194 and mozilla/rust#3678).  This makes it necessary to use my own C shim to be able to call a function pointer that fuse passes us.  I'm not particularly concerned with this as it is a temporary stopgap--once Rust fixes up its FFI to be able to call C functions through C function pointers it will no longer be necessary.
+Calling through C function pointers still doesn't work (see https://github.com/mozilla/rust/issues/6194 and https://github.com/mozilla/rust/issues/3678).  This makes it necessary to use my own C shim to be able to call a function pointer that fuse passes us.  I'm not particularly concerned with this, because it is a temporary stopgap--once Rust fixes up its FFI to be able to call C functions through C function pointers it will no longer be necessary.
 
 # BUILDING
 
