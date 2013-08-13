@@ -167,7 +167,7 @@ extern fn c_readdir(path: *c_char, buf: *c_void, filler: cfuncptr,
     unsafe {
         let ops = get_context_ops();
         let fill_func: fuse_fill_dir_func = |name, st, ofs| -> c_int {
-            do name.as_c_str |c_name| {
+            do name.to_c_str().with_ref |c_name| {
                 call_filler_function(filler, buf, c_name, option_to_ptr(st), ofs)
             }
         };
@@ -250,11 +250,9 @@ pub fn fuse_main(args: ~[~str], ops: ~FuseOperations) -> int {
         flock: ptr::null()
     };
     unsafe {
-        let arg_c_strs_owner: ~[*u8] = args.map(|s| vec::raw::to_ptr(s.as_bytes_with_null()));
-        let arg_c_strs_ptr = vec::raw::to_ptr(arg_c_strs_owner);
-//        cast::forget(arg_c_strs_owner);
-
-        fuse_main_real(args.len() as c_int, cast::transmute(arg_c_strs_ptr), 
+        let arg_c_strs_ptrs: ~[*c_char] = args.map(|s| s.to_c_str().unwrap() );
+        fuse_main_real(args.len() as c_int, 
+                       cast::transmute(vec::raw::to_ptr(arg_c_strs_ptrs)), 
                        &cfo, size_of::<c_fuse_operations>() as size_t,
                        cast::transmute(&ops))  as int
     }
