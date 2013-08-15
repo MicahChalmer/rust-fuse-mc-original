@@ -17,6 +17,11 @@ use std::libc::{
 };
 use fuse::*;
 use statvfs::Struct_statvfs;
+use std::io::stderr;
+use std::sys::size_of;
+use std::vec::raw::to_ptr;
+use std::cast::transmute;
+use std::ptr;
 
 mod fuse;
 mod statvfs;
@@ -179,4 +184,57 @@ pub trait FuseLowLevelOps {
     // forget_multi
     // flock
     // fallocate
+}
+
+extern { fn make_fuse_ll_oper<T:FuseLowLevelOps>(ops:&T) -> Struct_fuse_lowlevel_ops; }
+
+pub fn fuse_main_thin<Ops:FuseLowLevelOps>(args:~[~str], ops:~Ops) {
+    unsafe {
+        let arg_c_strs_ptrs: ~[*c_char] = args.map(|s| s.to_c_str().unwrap() );
+        let fuse_args = Struct_fuse_args {
+            argc: transmute(to_ptr(arg_c_strs_ptrs)),
+            argc: args.len() as c_int,
+            allocated: 0
+        };
+        let mut mountpoint:*c_char = ptr::null();
+        if fuse_parse_cmdline(to_ptr(&fuse_args),
+                              to_ptr(&mountpoint),
+                              ptr::null(), // multithreaded--we ignore
+                              ptr::null() // foreground--we ignore (for now)
+                              ) == -1 {
+            return;
+        }
+        
+        let fuse_chan = fuse_mount(mountpoint, to_ptr(&fuse_args));
+        if fuse_chan == ptr::null() {
+            // TODO: better error message?
+            stderr().write("Failed to mount\n");
+            fail!();
+        }
+        
+        let llo = make_fuse_ll_oper(ops);
+        let fuse_session = fuse_lowlevel_new(to_ptr(&fuse_args),
+                                             to_ptr(&llo),
+                                             size_of::<Struct_fuse_lowlevel_ops>(),
+                                             transmute(&ops));
+        if fuse_session == ptr::null() {
+            // TODO: better error message?
+            stderr().write("Failed to create FUSE session\n");
+            fail!();
+        }
+        
+        if fuse_set_signal_handlers(fuse_session) == -1 {
+            stderr().write("Failed to set FUSE signal handlers");
+            fail!();
+        }
+
+        fuse_session_add_chan(fuse_session, fuse_chan);
+        fuse_session_loop(fuse_session);
+        fuse_remove_signal_handlers(fuse_session);
+        fuse_session_remove_chan(fuse_chan);
+
+        fuse_session_destroy(fuse_session);
+        fuse_unmount(mountpoint, fuse_chan);
+        fuse_opt_free_args(to_ptr(&fuse_args));
+    };
 }
