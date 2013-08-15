@@ -63,86 +63,107 @@ pub enum ReadReply {
 
 type ErrnoResult<T> = Result<T, c_int>;
 
-/** Struct full of optional functions to implement fuse operations
- *
- * This really should be a trait.  But we can't know at run time which default
+
+
+/**
+ * Trait for "thin" interface to low-level FUSE ops.
+
+ * It would be best if a user of this could just implement the methods as
+ * desired, and leave the rest as defaults, and have this interface take care of
+ * the rest.  Unfortunately that's not quite possible.  FUSE has default
+ * behavior for some ops that can't just be invoked from a callback--the only
+ * way to get it is to pass NULL for the callback pointers into the
+ * fuse_lowlevel_ops structure.  But we can't know at run time which default
  * methods of a trait were overridden, which means we don't know which entries
- * in the Struct_fuse_lowlevel_ops to null out.  FUSE has default behavior for
- * some ops that can't just be invoked from a callback--the only way to get it
- * is to pass NULL for the callback pointers.  So here it is--a struct full of
- * optional closures instead. Argh.
+ * in the Struct_fuse_lowlevel_ops to null out.
+
+ * Instead, we've got a corresponding "is_implemented" method for each one.
+ * Define it to return true for each real method you implement.  _BLEAH!  YUCK!
+ * UGH!_ If you return true from an "is_implemented" method, but don't implement
+ * the corresponding real method, it's not a compile error--you just fail at
+ * run-time!  But it's the best we can do without some sort of reflection API
+ * that rust doesn't have, or a way to call the FUSE default behavior from a
+ * callback, which FUSE does not have.
+
  */
-#[deriving(Zero)]
-pub struct FuseLowLevelOps {
-    init: Option<~fn()>,
-    destroy: Option<~fn()>,
-    lookup: Option<~fn(parent: fuse::fuse_ino_t, name: &str)
-                       -> ErrnoResult<fuse::Struct_fuse_entry_param>>,
-    forget: Option<~fn(ino:fuse::fuse_ino_t, nlookup:c_ulong)>,
-    getattr: Option<~fn(ino: fuse::fuse_ino_t, flags: c_int)
-                        -> ErrnoResult<AttrReply>>,
-    setattr: Option<~fn(ino: fuse_ino_t, attrs_to_set:&[AttrToSet], 
-                        fh:Option<u64>) -> ErrnoResult<AttrReply>>,
-    readlink:Option<~fn(fuse_ino_t) -> ErrnoResult<~str>>,
-    mknod: Option<~fn(parent: fuse_ino_t, name: &str, mode: mode_t, 
-                      rdev: dev_t) -> ErrnoResult<EntryReply>>,
-    mkdir: Option<~fn(parent: fuse_ino_t, name: &str, mode: mode_t) 
-        -> ErrnoResult<EntryReply>>,
-    // TODO: Using the unit type with result seems kind of goofy, but
-    // is done for consistency with the others.  Is this right?
-    unlink: Option<~fn(parent: fuse_ino_t, name: &str)
-        -> ErrnoResult<()>>,
-    rmdir: Option<~fn(parent: fuse_ino_t, name: &str)
-        -> ErrnoResult<()>>,
-    symlink: Option<~fn(link:&str, parent: fuse_ino_t, name: &str)
-        -> ErrnoResult<EntryReply>>,
-    rename: Option<~fn(parent: fuse_ino_t, name: &str,
-                       newparent: fuse_ino_t, newname: &str)
-        -> ErrnoResult<()>>,
-    link: Option<~fn(ino: fuse_ino_t, newparent: fuse_ino_t, newname: &str)
-        -> ErrnoResult<EntryReply>>,
-    open: Option<~fn(ino: fuse_ino_t, flags: c_int) 
-        -> ErrnoResult<OpenReply>>,
-    read: Option<~fn(ino: fuse::fuse_ino_t, size: size_t, off: off_t, fh: u64)
-                     -> ErrnoResult<ReadReply>>,
-    // TODO: is writepage a bool, or an actual number that needs to be
-    // preserved?
-    write: Option<~fn(ino: fuse_ino_t, buf:&[u8], off: off_t, fh: u64,
-                      writepage: bool) -> ErrnoResult<size_t>>,
-    flush: Option<~fn(ino: fuse_ino_t, lock_owner: u64, fh: u64)
-        -> ErrnoResult<()>>,
-    release: Option<~fn(ino: fuse_ino_t, flags: c_int, fh: u64)
-        -> ErrnoResult<()>>,
-    fsync: Option<~fn(ino: fuse_ino_t, datasync: bool, fh: u64)
-        -> ErrnoResult<()>>,
-    opendir: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<OpenReply>>,
-    // TODO: Using a ReadReply would require the impl to do unsafe operations
-    // to use fuse_add_direntry.  So even the thin interface needs something
-    // else here.
-    readdir: Option<~fn(ino: fuse_ino_t, size: size_t, off: off_t, fh: u64)
-        -> ErrnoResult<ReadReply>>,
-    releasedir: Option<~fn(ino: fuse_ino_t, fh: u64) -> ErrnoResult<()>>,
-    fsyncdir: Option<~fn(ino: fuse_ino_t, datasync: bool, fh: u64)
-        -> ErrnoResult<()>>,
-    statfs: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<Struct_statvfs>>,
-    setxattr: Option<~fn(ino: fuse_ino_t, name: &str, value: &[u8], flags: int)
-        -> ErrnoResult<()>>,
-    // TODO: examine this--ReadReply may not be appropraite here
-    getxattr: Option<~fn(ino: fuse_ino_t, name: &str, size: size_t)
-        -> ErrnoResult<ReadReply>>,
-    // Called on getxattr with size of zero (meaning a query of total size)
-    getxattr_size: Option<~fn(ino: fuse_ino_t, name: &str)
-        -> ErrnoResult<size_t>>,
-    // TODO: examine this--ReadReply may not be appropraite here
-    listxattr: Option<~fn(ino: fuse_ino_t, name: &str, size: size_t)
-        -> ErrnoResult<ReadReply>>,
-    // Called on listxattr with size of zero (meaning a query of total size)
-    listxattr_size: Option<~fn(ino: fuse_ino_t, name: &str)
-        -> ErrnoResult<size_t>>,
-    removexattr: Option<~fn(ino: fuse_ino_t, name: &str) -> ErrnoResult<()>>,
-    access: Option<~fn(ino: fuse_ino_t, mask: c_int) -> ErrnoResult<()>>,
-    create: Option<~fn(ino: fuse_ino_t, parent: fuse_ino_t, name: &str,
-                       mode: mode_t, flags: c_int) -> ErrnoResult<OpenReply>>,
+pub trait FuseLowLevelOps {
+    fn init() { fail!() }
+    fn init_is_implemented() -> bool { false }
+    fn destroy() { fail!() }
+    fn destroy_is_implemented() -> bool { false }
+    fn lookup(parent: fuse_ino_t, name: &str) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
+    fn lookup_is_implemented() -> bool { false }
+    fn forget(ino:fuse_ino_t, nlookup:c_ulong) { fail!() }
+    fn forget_is_implemented() -> bool { false }
+    fn getattr(ino: fuse_ino_t, flags: c_int) -> ErrnoResult<AttrReply> { fail!() }
+    fn getattr_is_implemented() -> bool { false }
+    fn setattr(ino: fuse_ino_t, attrs_to_set:&[AttrToSet], fh:Option<u64>) -> ErrnoResult<AttrReply> { fail!() }
+    fn setattr_is_implemented() -> bool { false }
+    fn readlink(ino: fuse_ino_t) -> ErrnoResult<~str> { fail!() }
+    fn readlink_is_implemented() -> bool { false }
+    fn mknod(parent: fuse_ino_t, name: &str, mode: mode_t, rdev: dev_t) -> ErrnoResult<EntryReply> { fail!() }
+    fn mknod_is_implemented() -> bool { false }
+    fn mkdir(parent: fuse_ino_t, name: &str, mode: mode_t) -> ErrnoResult<EntryReply> { fail!() }
+    fn mkdir_is_implemented() -> bool { false }
+    // TODO: Using the unit type with result seems kind of goofy, but;
+    // is done for consistency with the others.  Is this right?;
+    fn unlink(parent: fuse_ino_t, name: &str) -> ErrnoResult<()> { fail!() }
+    fn unlink_is_implemented() -> bool { false }
+    fn rmdir(parent: fuse_ino_t, name: &str) -> ErrnoResult<()> { fail!() }
+    fn rmdir_is_implemented() -> bool { false }
+    fn symlink(link:&str, parent: fuse_ino_t, name: &str) -> ErrnoResult<EntryReply> { fail!() }
+    fn symlink_is_implemented() -> bool { false }
+    fn rename(parent: fuse_ino_t, name: &str, newparent: fuse_ino_t, newname: &str) -> ErrnoResult<()> { fail!() }
+    fn rename_is_implemented() -> bool { false }
+    fn link(ino: fuse_ino_t, newparent: fuse_ino_t, newname: &str) -> ErrnoResult<EntryReply> { fail!() }
+    fn link_is_implemented() -> bool { false }
+    fn open(ino: fuse_ino_t, flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
+    fn open_is_implemented() -> bool { false }
+    fn read(ino: fuse_ino_t, size: size_t, off: off_t, fh: u64) -> ErrnoResult<ReadReply> { fail!() }
+    fn read_is_implemented() -> bool { false }
+    // TODO: is writepage a bool, or an actual number that needs to be;
+    // preserved?;
+    fn write(ino: fuse_ino_t, buf:&[u8], off: off_t, fh: u64, writepage: bool) -> ErrnoResult<size_t> { fail!() }
+    fn write_is_implemented() -> bool { false }
+    fn flush(ino: fuse_ino_t, lock_owner: u64, fh: u64) -> ErrnoResult<()> { fail!() }
+    fn flush_is_implemented() -> bool { false }
+    fn release(ino: fuse_ino_t, flags: c_int, fh: u64) -> ErrnoResult<()> { fail!() }
+    fn release_is_implemented() -> bool { false }
+    fn fsync(ino: fuse_ino_t, datasync: bool, fh: u64) -> ErrnoResult<()> { fail!() }
+    fn fsync_is_implemented() -> bool { false }
+    fn opendir(ino: fuse_ino_t) -> ErrnoResult<OpenReply> { fail!() }
+    fn opendir_is_implemented() -> bool { false }
+    // TODO: Using a ReadReply would require the impl to do unsafe operations;
+    // to use fuse_add_direntry.  So even the thin interface needs something;
+    // else here.;
+    fn readdir(ino: fuse_ino_t, size: size_t, off: off_t, fh: u64) -> ErrnoResult<ReadReply> { fail!() }
+    fn readdir_is_implemented() -> bool { false }
+    fn releasedir(ino: fuse_ino_t, fh: u64) -> ErrnoResult<()> { fail!() }
+    fn releasedir_is_implemented() -> bool { false }
+    fn fsyncdir(ino: fuse_ino_t, datasync: bool, fh: u64) -> ErrnoResult<()> { fail!() }
+    fn fsyncdir_is_implemented() -> bool { false }
+    fn statfs(ino: fuse_ino_t) -> ErrnoResult<Struct_statvfs> { fail!() }
+    fn statfs_is_implemented() -> bool { false }
+    fn setxattr(ino: fuse_ino_t, name: &str, value: &[u8], flags: int) -> ErrnoResult<()> { fail!() }
+    fn setxattr_is_implemented() -> bool { false }
+    // TODO: examine this--ReadReply may not be appropraite here;
+    fn getxattr(ino: fuse_ino_t, name: &str, size: size_t) -> ErrnoResult<ReadReply> { fail!() }
+    fn getxattr_is_implemented() -> bool { false }
+    // Called on getxattr with size of zero (meaning a query of total size);
+    fn getxattr_size(ino: fuse_ino_t, name: &str) -> ErrnoResult<size_t> { fail!() }
+    fn getxattr_size_is_implemented() -> bool { false }
+    // TODO: examine this--ReadReply may not be appropraite here;
+    fn listxattr(ino: fuse_ino_t, name: &str, size: size_t) -> ErrnoResult<ReadReply> { fail!() }
+    fn listxattr_is_implemented() -> bool { false }
+    // Called on listxattr with size of zero (meaning a query of total size);
+    fn listxattr_size(ino: fuse_ino_t, name: &str) -> ErrnoResult<size_t> { fail!() }
+    fn listxattr_size_is_implemented() -> bool { false }
+    fn removexattr(ino: fuse_ino_t, name: &str) -> ErrnoResult<()> { fail!() }
+    fn removexattr_is_implemented() -> bool { false }
+    fn access(ino: fuse_ino_t, mask: c_int) -> ErrnoResult<()> { fail!() }
+    fn access_is_implemented() -> bool { false }
+    fn create(ino: fuse_ino_t, parent: fuse_ino_t, name: &str, mode: mode_t, flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
+    fn create_is_implemented() -> bool { false }
 
     // TODO: The following, which didn't even exist in earlier versions of FUSE,
     // can be considered nice-to-have (to an even greater extent than the whole
