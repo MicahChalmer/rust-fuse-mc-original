@@ -18,6 +18,9 @@ use std::sys::size_of;
 use std::cast::transmute;
 use std::ptr;
 use std::vec;
+use std::task::task;
+use std::c_str::CString;
+use std::cell;
 
 mod fuse;
 
@@ -85,7 +88,7 @@ type ErrnoResult<T> = Result<T, c_int>;
  * callback, which FUSE does not have.
 
  */
-pub trait FuseLowLevelOps: Clone {
+pub trait FuseLowLevelOps:Clone+Send {
     fn init(&self) { fail!() }
     fn init_is_implemented(&self) -> bool { false }
     fn destroy(&self) { fail!() }
@@ -178,14 +181,17 @@ pub trait FuseLowLevelOps: Clone {
     // fallocate
 }
 
-fn userdata_to_ops<T>(userdata:*c_void, func:&fn(ops:&FuseLowLevelOps) -> T) -> T {
+/**
+* Run a function with a borrowed pointer to the FuseLowLevelOps object pointed to by the given userdata pointer.
+*/
+fn userdata_to_ops<Ops:FuseLowLevelOps,Result>(userdata:*mut c_void,
+                      func:&fn(&Ops) -> Result) -> Result {
     unsafe {
-        let ops = userdata as *~FuseLowLevelOps;
-        func(*ops)
+        func(&*(userdata as *Ops))
     }
 }
 
-pub fn fuse_main_thin<Ops:FuseLowLevelOps>(args:~[~str], ops:~Ops) {
+pub fn fuse_main_thin<Ops:FuseLowLevelOps+Send>(args:~[~str], ops:~Ops) {
     unsafe {
         let arg_c_strs_ptrs: ~[*c_schar] = args.map(|s| s.to_c_str().unwrap() );
         let mut fuse_args = fuse::Struct_fuse_args {
@@ -213,7 +219,7 @@ pub fn fuse_main_thin<Ops:FuseLowLevelOps>(args:~[~str], ops:~Ops) {
         let fuse_session = fuse::fuse_lowlevel_new(ptr::to_mut_unsafe_ptr(&mut fuse_args),
                                              ptr::to_unsafe_ptr(&llo),
                                              size_of::<fuse::Struct_fuse_lowlevel_ops>() as size_t,
-                                             transmute(ptr::to_unsafe_ptr(&ops)));
+                                             ptr::to_unsafe_ptr(&ops) as *mut c_void);
         if fuse_session == ptr::null() {
             // TODO: better error message?
             stderr().write_line("Failed to create FUSE session\n");
@@ -231,13 +237,13 @@ pub fn fuse_main_thin<Ops:FuseLowLevelOps>(args:~[~str], ops:~Ops) {
         fuse::fuse_session_remove_chan(fuse_chan);
 
         fuse::fuse_session_destroy(fuse_session);
-        fuse::fuse_unmount(transmute(mountpoint), fuse_chan);
+        fuse::fuse_unmount(mountpoint as *c_schar, fuse_chan);
         fuse::fuse_opt_free_args(ptr::to_mut_unsafe_ptr(&mut fuse_args));
     };
 }
 
 
-pub fn make_fuse_ll_oper<Ops:FuseLowLevelOps>(ops:&Ops)
+pub fn make_fuse_ll_oper<Ops:FuseLowLevelOps+Send>(ops:&Ops)
     -> fuse::Struct_fuse_lowlevel_ops {
     return fuse::Struct_fuse_lowlevel_ops {
         init: if ops.init_is_implemented() { init_impl } else { ptr::null() },
@@ -286,15 +292,55 @@ pub fn make_fuse_ll_oper<Ops:FuseLowLevelOps>(ops:&Ops)
     }
 }
 
-extern fn init_impl(userdata:*c_void, _conn:*fuse::Struct_fuse_conn_info) {
-    do userdata_to_ops(userdata) |ops| { ops.init() }
+fn run_for_reply<Ops:FuseLowLevelOps+Send, Reply>(req:fuse::fuse_req_t, 
+                                                  reply_success:~fn(req:fuse::fuse_req_t, reply:Reply),
+                                                  do_op:~fn(~Ops) -> ErrnoResult<Reply>) {
+    unsafe {
+        // Need to use a cell to pass ownership of do_op through a closure.
+        // This is how spawn_with does it...
+        let fns_cell = cell::Cell::new((reply_success, do_op));
+        do userdata_to_ops(fuse::fuse_req_userdata(req)) |ops:&Ops| {
+            let dupe:~Ops = ~ops.clone();
+            let (reply_success, do_op) = fns_cell.take();
+            do task().spawn_with((dupe, reply_success, do_op)) |tuple: 
+                (~Ops, 
+                 ~fn(fuse::fuse_req_t, Reply), 
+                 ~fn(~Ops) -> ErrnoResult<Reply>)| {
+                let (ops, reply_success, do_op) = tuple;
+                match do_op(ops) {
+                    Ok(reply) => reply_success(req, reply),
+                    Err(errno) => { fuse::fuse_reply_err(req, errno); },
+                }
+                
+            }
+        }
+    }
 }
 
-extern fn destroy_impl(userdata:*c_void) {
-    do userdata_to_ops(userdata) |ops| { ops.destroy() }
+fn reply_entryparam(req: fuse::fuse_req_t, reply:fuse::Struct_fuse_entry_param) {
+    unsafe {
+        fuse::fuse_reply_entry(req, ptr::to_unsafe_ptr(&reply));
+    }
 }
 
-extern fn lookup_impl() { fail!() }
+extern fn init_impl<Ops:FuseLowLevelOps+Send>(userdata:*mut c_void, _conn:*fuse::Struct_fuse_conn_info) {
+    do userdata_to_ops(userdata) |ops:&Ops| { ops.init() }
+}
+
+extern fn destroy_impl<Ops:FuseLowLevelOps+Send>(userdata:*mut c_void) {
+    do userdata_to_ops(userdata) |ops:&Ops| { ops.destroy() }
+}
+
+extern fn lookup_impl<Ops:FuseLowLevelOps+Send>(req:fuse::fuse_req_t, 
+                                           parent:fuse::fuse_ino_t, 
+                                           name:*c_schar) {
+    do run_for_reply(req, reply_entryparam) |ops:~Ops| {
+        unsafe {
+            let cstr = CString::new(name,false);
+            ops.lookup(parent, cstr.as_bytes().to_str())
+        }
+    }
+}
 
 extern fn forget_impl() { fail!() }
 
