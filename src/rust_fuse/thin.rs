@@ -1,27 +1,23 @@
 use std::libc::{
-    c_char,
     c_double,
     c_int,
-    c_uint,
+    c_schar,
     c_ulong,
     c_void,
     dev_t,
     gid_t,
     mode_t,
     off_t,
-    pid_t,
     size_t,
     stat,
     time_t,
     uid_t,
 };
-use fuse::*;
-use statvfs::Struct_statvfs;
 use std::io::stderr;
 use std::sys::size_of;
-use std::vec::raw::to_ptr;
 use std::cast::transmute;
 use std::ptr;
+use std::vec;
 
 mod fuse;
 mod statvfs;
@@ -40,7 +36,7 @@ pub struct AttrReply {
 }
 
 pub struct EntryReply {
-    ino: fuse_ino_t,
+    ino: fuse::fuse_ino_t,
     generation: c_ulong,
     attr: stat,
     attr_timeout: c_double,
@@ -66,9 +62,8 @@ pub enum ReadReply {
     DataBuffer(~[u8])
 }
 
+/// The error result should be one of libc's errno values
 type ErrnoResult<T> = Result<T, c_int>;
-
-
 
 /**
  * Trait for "thin" interface to low-level FUSE ops.
@@ -91,84 +86,82 @@ type ErrnoResult<T> = Result<T, c_int>;
  * callback, which FUSE does not have.
 
  */
-pub trait FuseLowLevelOps {
-    fn init() { fail!() }
-    fn init_is_implemented() -> bool { false }
-    fn destroy() { fail!() }
-    fn destroy_is_implemented() -> bool { false }
-    fn lookup(parent: fuse_ino_t, name: &str) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
-    fn lookup_is_implemented() -> bool { false }
-    fn forget(ino:fuse_ino_t, nlookup:c_ulong) { fail!() }
-    fn forget_is_implemented() -> bool { false }
-    fn getattr(ino: fuse_ino_t, flags: c_int) -> ErrnoResult<AttrReply> { fail!() }
-    fn getattr_is_implemented() -> bool { false }
-    fn setattr(ino: fuse_ino_t, attrs_to_set:&[AttrToSet], fh:Option<u64>) -> ErrnoResult<AttrReply> { fail!() }
-    fn setattr_is_implemented() -> bool { false }
-    fn readlink(ino: fuse_ino_t) -> ErrnoResult<~str> { fail!() }
-    fn readlink_is_implemented() -> bool { false }
-    fn mknod(parent: fuse_ino_t, name: &str, mode: mode_t, rdev: dev_t) -> ErrnoResult<EntryReply> { fail!() }
-    fn mknod_is_implemented() -> bool { false }
-    fn mkdir(parent: fuse_ino_t, name: &str, mode: mode_t) -> ErrnoResult<EntryReply> { fail!() }
-    fn mkdir_is_implemented() -> bool { false }
+pub trait FuseLowLevelOps: Clone {
+    fn init(&self) { fail!() }
+    fn init_is_implemented(&self) -> bool { false }
+    fn destroy(&self) { fail!() }
+    fn destroy_is_implemented(&self) -> bool { false }
+    fn lookup(&self, _parent: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<fuse::Struct_fuse_entry_param> { fail!() }
+    fn lookup_is_implemented(&self) -> bool { false }
+    fn forget(&self, _ino:fuse::fuse_ino_t, _nlookup:c_ulong) { fail!() }
+    fn forget_is_implemented(&self) -> bool { false }
+    fn getattr(&self, _ino: fuse::fuse_ino_t, _flags: c_int) -> ErrnoResult<AttrReply> { fail!() }
+    fn getattr_is_implemented(&self) -> bool { false }
+    fn setattr(&self, _ino: fuse::fuse_ino_t, _attrs_to_set:&[AttrToSet], _fh:Option<u64>) -> ErrnoResult<AttrReply> { fail!() }
+    fn setattr_is_implemented(&self) -> bool { false }
+    fn readlink(&self, _ino: fuse::fuse_ino_t) -> ErrnoResult<~str> { fail!() }
+    fn readlink_is_implemented(&self) -> bool { false }
+    fn mknod(&self, _parent: fuse::fuse_ino_t, _name: &str, _mode: mode_t, _rdev: dev_t) -> ErrnoResult<EntryReply> { fail!() }
+    fn mknod_is_implemented(&self) -> bool { false }
+    fn mkdir(&self, _parent: fuse::fuse_ino_t, _name: &str, _mode: mode_t) -> ErrnoResult<EntryReply> { fail!() }
+    fn mkdir_is_implemented(&self) -> bool { false }
     // TODO: Using the unit type with result seems kind of goofy, but;
     // is done for consistency with the others.  Is this right?;
-    fn unlink(parent: fuse_ino_t, name: &str) -> ErrnoResult<()> { fail!() }
-    fn unlink_is_implemented() -> bool { false }
-    fn rmdir(parent: fuse_ino_t, name: &str) -> ErrnoResult<()> { fail!() }
-    fn rmdir_is_implemented() -> bool { false }
-    fn symlink(link:&str, parent: fuse_ino_t, name: &str) -> ErrnoResult<EntryReply> { fail!() }
-    fn symlink_is_implemented() -> bool { false }
-    fn rename(parent: fuse_ino_t, name: &str, newparent: fuse_ino_t, newname: &str) -> ErrnoResult<()> { fail!() }
-    fn rename_is_implemented() -> bool { false }
-    fn link(ino: fuse_ino_t, newparent: fuse_ino_t, newname: &str) -> ErrnoResult<EntryReply> { fail!() }
-    fn link_is_implemented() -> bool { false }
-    fn open(ino: fuse_ino_t, flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
-    fn open_is_implemented() -> bool { false }
-    fn read(ino: fuse_ino_t, size: size_t, off: off_t, fh: u64) -> ErrnoResult<ReadReply> { fail!() }
-    fn read_is_implemented() -> bool { false }
+    fn unlink(&self, _parent: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
+    fn unlink_is_implemented(&self) -> bool { false }
+    fn rmdir(&self, _parent: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
+    fn rmdir_is_implemented(&self) -> bool { false }
+    fn symlink(&self, _link:&str, _parent: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<EntryReply> { fail!() }
+    fn symlink_is_implemented(&self) -> bool { false }
+    fn rename(&self, _parent: fuse::fuse_ino_t, _name: &str, _newparent: fuse::fuse_ino_t, _newname: &str) -> ErrnoResult<()> { fail!() }
+    fn rename_is_implemented(&self) -> bool { false }
+    fn link(&self, _ino: fuse::fuse_ino_t, _newparent: fuse::fuse_ino_t, _newname: &str) -> ErrnoResult<EntryReply> { fail!() }
+    fn link_is_implemented(&self) -> bool { false }
+    fn open(&self, _ino: fuse::fuse_ino_t, _flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
+    fn open_is_implemented(&self) -> bool { false }
+    fn read(&self, _ino: fuse::fuse_ino_t, _size: size_t, _off: off_t, _fh: u64) -> ErrnoResult<ReadReply> { fail!() }
+    fn read_is_implemented(&self) -> bool { false }
     // TODO: is writepage a bool, or an actual number that needs to be;
     // preserved?;
-    fn write(ino: fuse_ino_t, buf:&[u8], off: off_t, fh: u64, writepage: bool) -> ErrnoResult<size_t> { fail!() }
-    fn write_is_implemented() -> bool { false }
-    fn flush(ino: fuse_ino_t, lock_owner: u64, fh: u64) -> ErrnoResult<()> { fail!() }
-    fn flush_is_implemented() -> bool { false }
-    fn release(ino: fuse_ino_t, flags: c_int, fh: u64) -> ErrnoResult<()> { fail!() }
-    fn release_is_implemented() -> bool { false }
-    fn fsync(ino: fuse_ino_t, datasync: bool, fh: u64) -> ErrnoResult<()> { fail!() }
-    fn fsync_is_implemented() -> bool { false }
-    fn opendir(ino: fuse_ino_t) -> ErrnoResult<OpenReply> { fail!() }
-    fn opendir_is_implemented() -> bool { false }
+    fn write(&self, _ino: fuse::fuse_ino_t, _buf:&[u8], _off: off_t, _fh: u64, _writepage: bool) -> ErrnoResult<size_t> { fail!() }
+    fn write_is_implemented(&self) -> bool { false }
+    fn flush(&self, _ino: fuse::fuse_ino_t, _lock_owner: u64, _fh: u64) -> ErrnoResult<()> { fail!() }
+    fn flush_is_implemented(&self) -> bool { false }
+    fn release(&self, _ino: fuse::fuse_ino_t, _flags: c_int, _fh: u64) -> ErrnoResult<()> { fail!() }
+    fn release_is_implemented(&self) -> bool { false }
+    fn fsync(&self, _ino: fuse::fuse_ino_t, _datasync: bool, _fh: u64) -> ErrnoResult<()> { fail!() }
+    fn fsync_is_implemented(&self) -> bool { false }
+    fn opendir(&self, _ino: fuse::fuse_ino_t) -> ErrnoResult<OpenReply> { fail!() }
+    fn opendir_is_implemented(&self) -> bool { false }
     // TODO: Using a ReadReply would require the impl to do unsafe operations;
     // to use fuse_add_direntry.  So even the thin interface needs something;
     // else here.;
-    fn readdir(ino: fuse_ino_t, size: size_t, off: off_t, fh: u64) -> ErrnoResult<ReadReply> { fail!() }
-    fn readdir_is_implemented() -> bool { false }
-    fn releasedir(ino: fuse_ino_t, fh: u64) -> ErrnoResult<()> { fail!() }
-    fn releasedir_is_implemented() -> bool { false }
-    fn fsyncdir(ino: fuse_ino_t, datasync: bool, fh: u64) -> ErrnoResult<()> { fail!() }
-    fn fsyncdir_is_implemented() -> bool { false }
-    fn statfs(ino: fuse_ino_t) -> ErrnoResult<Struct_statvfs> { fail!() }
-    fn statfs_is_implemented() -> bool { false }
-    fn setxattr(ino: fuse_ino_t, name: &str, value: &[u8], flags: int) -> ErrnoResult<()> { fail!() }
-    fn setxattr_is_implemented() -> bool { false }
+    fn readdir(&self, _ino: fuse::fuse_ino_t, _size: size_t, _off: off_t, _fh: u64) -> ErrnoResult<ReadReply> { fail!() }
+    fn readdir_is_implemented(&self) -> bool { false }
+    fn releasedir(&self, _ino: fuse::fuse_ino_t, _fh: u64) -> ErrnoResult<()> { fail!() }
+    fn releasedir_is_implemented(&self) -> bool { false }
+    fn fsyncdir(&self, _ino: fuse::fuse_ino_t, _datasync: bool, _fh: u64) -> ErrnoResult<()> { fail!() }
+    fn fsyncdir_is_implemented(&self) -> bool { false }
+    fn statfs(&self, _ino: fuse::fuse_ino_t) -> ErrnoResult<statvfs::Struct_statvfs> { fail!() }
+    fn statfs_is_implemented(&self) -> bool { false }
+    fn setxattr(&self, _ino: fuse::fuse_ino_t, _name: &str, _value: &[u8], _flags: int) -> ErrnoResult<()> { fail!() }
+    fn setxattr_is_implemented(&self) -> bool { false }
     // TODO: examine this--ReadReply may not be appropraite here;
-    fn getxattr(ino: fuse_ino_t, name: &str, size: size_t) -> ErrnoResult<ReadReply> { fail!() }
-    fn getxattr_is_implemented() -> bool { false }
+    fn getxattr(&self, _ino: fuse::fuse_ino_t, _name: &str, _size: size_t) -> ErrnoResult<ReadReply> { fail!() }
+    fn getxattr_is_implemented(&self) -> bool { false }
     // Called on getxattr with size of zero (meaning a query of total size);
-    fn getxattr_size(ino: fuse_ino_t, name: &str) -> ErrnoResult<size_t> { fail!() }
-    fn getxattr_size_is_implemented() -> bool { false }
+    fn getxattr_size(&self, _ino: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<size_t> { fail!() }
     // TODO: examine this--ReadReply may not be appropraite here;
-    fn listxattr(ino: fuse_ino_t, name: &str, size: size_t) -> ErrnoResult<ReadReply> { fail!() }
-    fn listxattr_is_implemented() -> bool { false }
+    fn listxattr(&self, _ino: fuse::fuse_ino_t, _name: &str, _size: size_t) -> ErrnoResult<ReadReply> { fail!() }
+    fn listxattr_is_implemented(&self) -> bool { false }
     // Called on listxattr with size of zero (meaning a query of total size);
-    fn listxattr_size(ino: fuse_ino_t, name: &str) -> ErrnoResult<size_t> { fail!() }
-    fn listxattr_size_is_implemented() -> bool { false }
-    fn removexattr(ino: fuse_ino_t, name: &str) -> ErrnoResult<()> { fail!() }
-    fn removexattr_is_implemented() -> bool { false }
-    fn access(ino: fuse_ino_t, mask: c_int) -> ErrnoResult<()> { fail!() }
-    fn access_is_implemented() -> bool { false }
-    fn create(ino: fuse_ino_t, parent: fuse_ino_t, name: &str, mode: mode_t, flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
-    fn create_is_implemented() -> bool { false }
+    fn listxattr_size(&self, _ino: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<size_t> { fail!() }
+    fn removexattr(&self, _ino: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
+    fn removexattr_is_implemented(&self) -> bool { false }
+    fn access(&self, _ino: fuse::fuse_ino_t, _mask: c_int) -> ErrnoResult<()> { fail!() }
+    fn access_is_implemented(&self) -> bool { false }
+    fn create(&self, _ino: fuse::fuse_ino_t, _parent: fuse::fuse_ino_t, _name: &str, _mode: mode_t, _flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
+    fn create_is_implemented(&self) -> bool { false }
 
     // TODO: The following, which didn't even exist in earlier versions of FUSE,
     // can be considered nice-to-have (to an even greater extent than the whole
@@ -186,55 +179,176 @@ pub trait FuseLowLevelOps {
     // fallocate
 }
 
-extern { fn make_fuse_ll_oper<T:FuseLowLevelOps>(ops:&T) -> Struct_fuse_lowlevel_ops; }
+fn userdata_to_ops<T>(userdata:*c_void, func:&fn(ops:&FuseLowLevelOps) -> T) -> T {
+    unsafe {
+        let ops = userdata as *~FuseLowLevelOps;
+        func(*ops)
+    }
+}
 
 pub fn fuse_main_thin<Ops:FuseLowLevelOps>(args:~[~str], ops:~Ops) {
     unsafe {
-        let arg_c_strs_ptrs: ~[*c_char] = args.map(|s| s.to_c_str().unwrap() );
-        let fuse_args = Struct_fuse_args {
-            argc: transmute(to_ptr(arg_c_strs_ptrs)),
+        let arg_c_strs_ptrs: ~[*c_schar] = args.map(|s| s.to_c_str().unwrap() );
+        let mut fuse_args = fuse::Struct_fuse_args {
+            argv: transmute(vec::raw::to_ptr(arg_c_strs_ptrs)),
             argc: args.len() as c_int,
             allocated: 0
         };
-        let mut mountpoint:*c_char = ptr::null();
-        if fuse_parse_cmdline(to_ptr(&fuse_args),
-                              to_ptr(&mountpoint),
-                              ptr::null(), // multithreaded--we ignore
-                              ptr::null() // foreground--we ignore (for now)
+        let mut mountpoint:*mut c_schar = ptr::mut_null();
+        if fuse::fuse_parse_cmdline(ptr::to_mut_unsafe_ptr(&mut fuse_args),
+                              ptr::to_mut_unsafe_ptr(&mut mountpoint),
+                              ptr::mut_null(), // multithreaded--we ignore
+                              ptr::mut_null() // foreground--we ignore (for now)
                               ) == -1 {
             return;
         }
         
-        let fuse_chan = fuse_mount(mountpoint, to_ptr(&fuse_args));
+        let fuse_chan = fuse::fuse_mount(mountpoint as *c_schar, ptr::to_mut_unsafe_ptr(&mut fuse_args));
         if fuse_chan == ptr::null() {
             // TODO: better error message?
-            stderr().write("Failed to mount\n");
+            stderr().write_line("Failed to mount\n");
             fail!();
         }
         
         let llo = make_fuse_ll_oper(ops);
-        let fuse_session = fuse_lowlevel_new(to_ptr(&fuse_args),
-                                             to_ptr(&llo),
-                                             size_of::<Struct_fuse_lowlevel_ops>(),
-                                             transmute(&ops));
+        let fuse_session = fuse::fuse_lowlevel_new(ptr::to_mut_unsafe_ptr(&mut fuse_args),
+                                             ptr::to_unsafe_ptr(&llo),
+                                             size_of::<fuse::Struct_fuse_lowlevel_ops>() as size_t,
+                                             transmute(ptr::to_unsafe_ptr(&ops)));
         if fuse_session == ptr::null() {
             // TODO: better error message?
-            stderr().write("Failed to create FUSE session\n");
+            stderr().write_line("Failed to create FUSE session\n");
             fail!();
         }
         
-        if fuse_set_signal_handlers(fuse_session) == -1 {
-            stderr().write("Failed to set FUSE signal handlers");
+        if fuse::fuse_set_signal_handlers(fuse_session) == -1 {
+            stderr().write_line("Failed to set FUSE signal handlers");
             fail!();
         }
 
-        fuse_session_add_chan(fuse_session, fuse_chan);
-        fuse_session_loop(fuse_session);
-        fuse_remove_signal_handlers(fuse_session);
-        fuse_session_remove_chan(fuse_chan);
+        fuse::fuse_session_add_chan(fuse_session, fuse_chan);
+        fuse::fuse_session_loop(fuse_session);
+        fuse::fuse_remove_signal_handlers(fuse_session);
+        fuse::fuse_session_remove_chan(fuse_chan);
 
-        fuse_session_destroy(fuse_session);
-        fuse_unmount(mountpoint, fuse_chan);
-        fuse_opt_free_args(to_ptr(&fuse_args));
+        fuse::fuse_session_destroy(fuse_session);
+        fuse::fuse_unmount(transmute(mountpoint), fuse_chan);
+        fuse::fuse_opt_free_args(ptr::to_mut_unsafe_ptr(&mut fuse_args));
     };
 }
+
+
+pub fn make_fuse_ll_oper<Ops:FuseLowLevelOps>(ops:&Ops)
+    -> fuse::Struct_fuse_lowlevel_ops {
+    return fuse::Struct_fuse_lowlevel_ops {
+        init: if ops.init_is_implemented() { init_impl } else { ptr::null() },
+        destroy: if ops.destroy_is_implemented() { destroy_impl } else { ptr::null() },
+        lookup: if ops.lookup_is_implemented() { lookup_impl } else { ptr::null() },
+        forget: if ops.forget_is_implemented() { forget_impl } else { ptr::null() },
+        getattr: if ops.getattr_is_implemented() { getattr_impl } else { ptr::null() },
+        setattr: if ops.setattr_is_implemented() { setattr_impl } else { ptr::null() },
+        readlink: if ops.readlink_is_implemented() { readlink_impl } else { ptr::null() },
+        mknod: if ops.mknod_is_implemented() { mknod_impl } else { ptr::null() },
+        mkdir: if ops.mkdir_is_implemented() { mkdir_impl } else { ptr::null() },
+        unlink: if ops.unlink_is_implemented() { unlink_impl } else { ptr::null() },
+        rmdir: if ops.rmdir_is_implemented() { rmdir_impl } else { ptr::null() },
+        symlink: if ops.symlink_is_implemented() { symlink_impl } else { ptr::null() },
+        rename: if ops.rename_is_implemented() { rename_impl } else { ptr::null() },
+        link: if ops.link_is_implemented() { link_impl } else { ptr::null() },
+        open: if ops.open_is_implemented() { open_impl } else { ptr::null() },
+        read: if ops.read_is_implemented() { read_impl } else { ptr::null() },
+        write: if ops.write_is_implemented() { write_impl } else { ptr::null() },
+        flush: if ops.flush_is_implemented() { flush_impl } else { ptr::null() },
+        release: if ops.release_is_implemented() { release_impl } else { ptr::null() },
+        fsync: if ops.fsync_is_implemented() { fsync_impl } else { ptr::null() },
+        opendir: if ops.opendir_is_implemented() { opendir_impl } else { ptr::null() },
+        readdir: if ops.readdir_is_implemented() { readdir_impl } else { ptr::null() },
+        releasedir: if ops.releasedir_is_implemented() { releasedir_impl } else { ptr::null() },
+        fsyncdir: if ops.fsyncdir_is_implemented() { fsyncdir_impl } else { ptr::null() },
+        statfs: if ops.statfs_is_implemented() { statfs_impl } else { ptr::null() },
+        setxattr: if ops.setxattr_is_implemented() { setxattr_impl } else { ptr::null() },
+        getxattr: if ops.getxattr_is_implemented() { getxattr_impl } else { ptr::null() },
+        listxattr: if ops.listxattr_is_implemented() { listxattr_impl } else { ptr::null() },
+        removexattr: if ops.removexattr_is_implemented() { removexattr_impl } else { ptr::null() },
+        access: if ops.access_is_implemented() { access_impl } else { ptr::null() },
+        create: if ops.create_is_implemented() { create_impl } else { ptr::null() },
+
+        // Not implemented yet:
+        getlk: ptr::null(),
+        setlk: ptr::null(),
+        bmap: ptr::null(),
+        ioctl: ptr::null(),
+        poll: ptr::null(),
+        write_buf: ptr::null(),
+        retrieve_reply: ptr::null(),
+        forget_multi: ptr::null(),
+        flock: ptr::null(),
+        fallocate: ptr::null(),
+    }
+}
+
+extern fn init_impl(userdata:*c_void, _conn:*fuse::Struct_fuse_conn_info) {
+    do userdata_to_ops(userdata) |ops| { ops.init() }
+}
+
+extern fn destroy_impl(userdata:*c_void) {
+    do userdata_to_ops(userdata) |ops| { ops.destroy() }
+}
+
+extern fn lookup_impl() { fail!() }
+
+extern fn forget_impl() { fail!() }
+
+extern fn getattr_impl() { fail!() }
+
+extern fn setattr_impl() { fail!() }
+
+extern fn readlink_impl() { fail!() }
+
+extern fn mknod_impl() { fail!() }
+
+extern fn mkdir_impl() { fail!() }
+
+extern fn unlink_impl() { fail!() }
+
+extern fn rmdir_impl() { fail!() }
+
+extern fn symlink_impl() { fail!() }
+
+extern fn rename_impl() { fail!() }
+
+extern fn link_impl() { fail!() }
+
+extern fn open_impl() { fail!() }
+
+extern fn read_impl() { fail!() }
+
+extern fn write_impl() { fail!() }
+
+extern fn flush_impl() { fail!() }
+
+extern fn release_impl() { fail!() }
+
+extern fn fsync_impl() { fail!() }
+
+extern fn opendir_impl() { fail!() }
+
+extern fn readdir_impl() { fail!() }
+
+extern fn releasedir_impl() { fail!() }
+
+extern fn fsyncdir_impl() { fail!() }
+
+extern fn statfs_impl() { fail!() }
+
+extern fn setxattr_impl() { fail!() }
+
+extern fn getxattr_impl() { fail!() }
+
+extern fn listxattr_impl() { fail!() }
+
+extern fn removexattr_impl() { fail!() }
+
+extern fn access_impl() { fail!() }
+
+extern fn create_impl() { fail!() }

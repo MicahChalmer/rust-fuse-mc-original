@@ -55,45 +55,21 @@ pub type __qaddr_t = *mut __quad_t;
 pub type __caddr_t = *mut c_schar;
 pub type __intptr_t = c_long;
 pub type __socklen_t = c_uint;
-pub struct Struct_flock {
-    l_type: c_short,
-    l_whence: c_short,
-    l_start: __off64_t,
-    l_len: __off64_t,
-    l_pid: __pid_t,
-}
-pub type mode_t = __mode_t;
-pub type off_t = __off64_t;
-pub type pid_t = __pid_t;
-pub struct Struct_timespec {
-    tv_sec: __time_t,
-    tv_nsec: __syscall_slong_t,
-}
-pub struct Struct_stat {
-    st_dev: __dev_t,
-    st_ino: __ino_t,
-    st_nlink: __nlink_t,
-    st_mode: __mode_t,
-    st_uid: __uid_t,
-    st_gid: __gid_t,
-    __pad0: c_int,
-    st_rdev: __dev_t,
-    st_size: __off_t,
-    st_blksize: __blksize_t,
-    st_blocks: __blkcnt_t,
-    st_atim: Struct_timespec,
-    st_mtim: Struct_timespec,
-    st_ctim: Struct_timespec,
-    __unused: [__syscall_slong_t, ..3u],
+pub struct Struct_statfs {
+    f_type: __fsword_t,
+    f_bsize: __fsword_t,
+    f_blocks: __fsblkcnt64_t,
+    f_bfree: __fsblkcnt64_t,
+    f_bavail: __fsblkcnt64_t,
+    f_files: __fsfilcnt64_t,
+    f_ffree: __fsfilcnt64_t,
+    f_fsid: __fsid_t,
+    f_namelen: __fsword_t,
+    f_frsize: __fsword_t,
+    f_flags: __fsword_t,
+    f_spare: [__fsword_t, ..4u],
 }
 extern "C" {
-    pub fn fcntl(__fd: c_int, __cmd: c_int) -> c_int;
-    pub fn open(__file: *c_schar, __oflag: c_int) -> c_int;
-    pub fn openat(__fd: c_int, __file: *c_schar, __oflag: c_int) -> c_int;
-    pub fn creat(__file: *c_schar, __mode: mode_t) -> c_int;
-    pub fn lockf(__fd: c_int, __cmd: c_int, __len: __off64_t) -> c_int;
-    pub fn posix_fadvise(__fd: c_int, __offset: __off64_t, __len: __off64_t,
-                         __advise: c_int) -> c_int;
-    pub fn posix_fallocate(__fd: c_int, __offset: __off64_t, __len: __off64_t)
-     -> c_int;
+    pub fn statfs(__file: *c_schar, __buf: *mut Struct_statfs) -> c_int;
+    pub fn fstatfs(__fildes: c_int, __buf: *mut Struct_statfs) -> c_int;
 }

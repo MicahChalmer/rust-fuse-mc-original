@@ -26,7 +26,7 @@ pub type __off_t = c_long;
 pub type __off64_t = c_long;
 pub type __pid_t = c_int;
 pub struct __fsid_t {
-    pub __val: [c_int, ..2u],
+    __val: [c_int, ..2u],
 }
 pub type __clock_t = c_long;
 pub type __rlim_t = c_ulong;
@@ -56,21 +56,25 @@ pub type __caddr_t = *mut c_schar;
 pub type __intptr_t = c_long;
 pub type __socklen_t = c_uint;
 pub struct Struct_statvfs {
-    pub f_bsize: c_ulong,
-    pub f_frsize: c_ulong,
-    pub f_blocks: __fsblkcnt_t,
-    pub f_bfree: __fsblkcnt_t,
-    pub f_bavail: __fsblkcnt_t,
-    pub f_files: __fsfilcnt_t,
-    pub f_ffree: __fsfilcnt_t,
-    pub f_favail: __fsfilcnt_t,
-    pub f_fsid: c_ulong,
-    pub f_flag: c_ulong,
-    pub f_namemax: c_ulong,
-    pub __f_spare: [c_int, ..6u],
+    f_bsize: c_ulong,
+    f_frsize: c_ulong,
+    f_blocks: __fsblkcnt64_t,
+    f_bfree: __fsblkcnt64_t,
+    f_bavail: __fsblkcnt64_t,
+    f_files: __fsfilcnt64_t,
+    f_ffree: __fsfilcnt64_t,
+    f_favail: __fsfilcnt64_t,
+    f_fsid: c_ulong,
+    f_flag: c_ulong,
+    f_namemax: c_ulong,
+    __f_spare: [c_int, ..6u],
 }
 pub type Enum_Unnamed1 = c_uint;
 pub static ST_RDONLY: c_uint = 1;
 pub static ST_NOSUID: c_uint = 2;
-pub type fsblkcnt_t = __fsblkcnt_t;
-pub type fsfilcnt_t = __fsfilcnt_t;
+pub type fsblkcnt_t = __fsblkcnt64_t;
+pub type fsfilcnt_t = __fsfilcnt64_t;
+extern "C" {
+    pub fn statvfs(__file: *c_schar, __buf: *mut Struct_statvfs) -> c_int;
+    pub fn fstatvfs(__fildes: c_int, __buf: *mut Struct_statvfs) -> c_int;
+}
