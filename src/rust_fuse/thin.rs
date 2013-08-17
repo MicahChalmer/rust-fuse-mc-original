@@ -20,7 +20,6 @@ use std::ptr;
 use std::vec;
 
 mod fuse;
-mod statvfs;
 
 /// Information to be returned from open
 #[deriving(Zero)]
@@ -142,7 +141,7 @@ pub trait FuseLowLevelOps: Clone {
     fn releasedir_is_implemented(&self) -> bool { false }
     fn fsyncdir(&self, _ino: fuse::fuse_ino_t, _datasync: bool, _fh: u64) -> ErrnoResult<()> { fail!() }
     fn fsyncdir_is_implemented(&self) -> bool { false }
-    fn statfs(&self, _ino: fuse::fuse_ino_t) -> ErrnoResult<statvfs::Struct_statvfs> { fail!() }
+    fn statfs(&self, _ino: fuse::fuse_ino_t) -> ErrnoResult<fuse::Struct_statvfs> { fail!() }
     fn statfs_is_implemented(&self) -> bool { false }
     fn setxattr(&self, _ino: fuse::fuse_ino_t, _name: &str, _value: &[u8], _flags: int) -> ErrnoResult<()> { fail!() }
     fn setxattr_is_implemented(&self) -> bool { false }
