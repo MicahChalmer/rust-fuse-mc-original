@@ -21,8 +21,7 @@ use std::vec;
 use std::task::task;
 use std::c_str::CString;
 use std::cell;
-
-mod fuse;
+use fuse::*;
 
 /// Information to be returned from open
 #[deriving(Zero)]
@@ -38,7 +37,7 @@ pub struct AttrReply {
 }
 
 pub struct EntryReply {
-    ino: fuse::fuse_ino_t,
+    ino: fuse_ino_t,
     generation: c_ulong,
     attr: stat,
     attr_timeout: c_double,
@@ -93,76 +92,76 @@ pub trait FuseLowLevelOps:Clone+Send {
     fn init_is_implemented(&self) -> bool { false }
     fn destroy(&self) { fail!() }
     fn destroy_is_implemented(&self) -> bool { false }
-    fn lookup(&self, _parent: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<fuse::Struct_fuse_entry_param> { fail!() }
+    fn lookup(&self, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
     fn lookup_is_implemented(&self) -> bool { false }
-    fn forget(&self, _ino:fuse::fuse_ino_t, _nlookup:c_ulong) { fail!() }
+    fn forget(&self, _ino:fuse_ino_t, _nlookup:c_ulong) { fail!() }
     fn forget_is_implemented(&self) -> bool { false }
-    fn getattr(&self, _ino: fuse::fuse_ino_t, _flags: c_int) -> ErrnoResult<AttrReply> { fail!() }
+    fn getattr(&self, _ino: fuse_ino_t, _flags: c_int) -> ErrnoResult<AttrReply> { fail!() }
     fn getattr_is_implemented(&self) -> bool { false }
-    fn setattr(&self, _ino: fuse::fuse_ino_t, _attrs_to_set:&[AttrToSet], _fh:Option<u64>) -> ErrnoResult<AttrReply> { fail!() }
+    fn setattr(&self, _ino: fuse_ino_t, _attrs_to_set:&[AttrToSet], _fh:Option<u64>) -> ErrnoResult<AttrReply> { fail!() }
     fn setattr_is_implemented(&self) -> bool { false }
-    fn readlink(&self, _ino: fuse::fuse_ino_t) -> ErrnoResult<~str> { fail!() }
+    fn readlink(&self, _ino: fuse_ino_t) -> ErrnoResult<~str> { fail!() }
     fn readlink_is_implemented(&self) -> bool { false }
-    fn mknod(&self, _parent: fuse::fuse_ino_t, _name: &str, _mode: mode_t, _rdev: dev_t) -> ErrnoResult<EntryReply> { fail!() }
+    fn mknod(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t, _rdev: dev_t) -> ErrnoResult<EntryReply> { fail!() }
     fn mknod_is_implemented(&self) -> bool { false }
-    fn mkdir(&self, _parent: fuse::fuse_ino_t, _name: &str, _mode: mode_t) -> ErrnoResult<EntryReply> { fail!() }
+    fn mkdir(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t) -> ErrnoResult<EntryReply> { fail!() }
     fn mkdir_is_implemented(&self) -> bool { false }
     // TODO: Using the unit type with result seems kind of goofy, but;
     // is done for consistency with the others.  Is this right?;
-    fn unlink(&self, _parent: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
+    fn unlink(&self, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
     fn unlink_is_implemented(&self) -> bool { false }
-    fn rmdir(&self, _parent: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
+    fn rmdir(&self, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
     fn rmdir_is_implemented(&self) -> bool { false }
-    fn symlink(&self, _link:&str, _parent: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<EntryReply> { fail!() }
+    fn symlink(&self, _link:&str, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<EntryReply> { fail!() }
     fn symlink_is_implemented(&self) -> bool { false }
-    fn rename(&self, _parent: fuse::fuse_ino_t, _name: &str, _newparent: fuse::fuse_ino_t, _newname: &str) -> ErrnoResult<()> { fail!() }
+    fn rename(&self, _parent: fuse_ino_t, _name: &str, _newparent: fuse_ino_t, _newname: &str) -> ErrnoResult<()> { fail!() }
     fn rename_is_implemented(&self) -> bool { false }
-    fn link(&self, _ino: fuse::fuse_ino_t, _newparent: fuse::fuse_ino_t, _newname: &str) -> ErrnoResult<EntryReply> { fail!() }
+    fn link(&self, _ino: fuse_ino_t, _newparent: fuse_ino_t, _newname: &str) -> ErrnoResult<EntryReply> { fail!() }
     fn link_is_implemented(&self) -> bool { false }
-    fn open(&self, _ino: fuse::fuse_ino_t, _flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
+    fn open(&self, _ino: fuse_ino_t, _flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
     fn open_is_implemented(&self) -> bool { false }
-    fn read(&self, _ino: fuse::fuse_ino_t, _size: size_t, _off: off_t, _fh: u64) -> ErrnoResult<ReadReply> { fail!() }
+    fn read(&self, _ino: fuse_ino_t, _size: size_t, _off: off_t, _fh: u64) -> ErrnoResult<ReadReply> { fail!() }
     fn read_is_implemented(&self) -> bool { false }
     // TODO: is writepage a bool, or an actual number that needs to be;
     // preserved?;
-    fn write(&self, _ino: fuse::fuse_ino_t, _buf:&[u8], _off: off_t, _fh: u64, _writepage: bool) -> ErrnoResult<size_t> { fail!() }
+    fn write(&self, _ino: fuse_ino_t, _buf:&[u8], _off: off_t, _fh: u64, _writepage: bool) -> ErrnoResult<size_t> { fail!() }
     fn write_is_implemented(&self) -> bool { false }
-    fn flush(&self, _ino: fuse::fuse_ino_t, _lock_owner: u64, _fh: u64) -> ErrnoResult<()> { fail!() }
+    fn flush(&self, _ino: fuse_ino_t, _lock_owner: u64, _fh: u64) -> ErrnoResult<()> { fail!() }
     fn flush_is_implemented(&self) -> bool { false }
-    fn release(&self, _ino: fuse::fuse_ino_t, _flags: c_int, _fh: u64) -> ErrnoResult<()> { fail!() }
+    fn release(&self, _ino: fuse_ino_t, _flags: c_int, _fh: u64) -> ErrnoResult<()> { fail!() }
     fn release_is_implemented(&self) -> bool { false }
-    fn fsync(&self, _ino: fuse::fuse_ino_t, _datasync: bool, _fh: u64) -> ErrnoResult<()> { fail!() }
+    fn fsync(&self, _ino: fuse_ino_t, _datasync: bool, _fh: u64) -> ErrnoResult<()> { fail!() }
     fn fsync_is_implemented(&self) -> bool { false }
-    fn opendir(&self, _ino: fuse::fuse_ino_t) -> ErrnoResult<OpenReply> { fail!() }
+    fn opendir(&self, _ino: fuse_ino_t) -> ErrnoResult<OpenReply> { fail!() }
     fn opendir_is_implemented(&self) -> bool { false }
     // TODO: Using a ReadReply would require the impl to do unsafe operations;
     // to use fuse_add_direntry.  So even the thin interface needs something;
     // else here.;
-    fn readdir(&self, _ino: fuse::fuse_ino_t, _size: size_t, _off: off_t, _fh: u64) -> ErrnoResult<ReadReply> { fail!() }
+    fn readdir(&self, _ino: fuse_ino_t, _size: size_t, _off: off_t, _fh: u64) -> ErrnoResult<ReadReply> { fail!() }
     fn readdir_is_implemented(&self) -> bool { false }
-    fn releasedir(&self, _ino: fuse::fuse_ino_t, _fh: u64) -> ErrnoResult<()> { fail!() }
+    fn releasedir(&self, _ino: fuse_ino_t, _fh: u64) -> ErrnoResult<()> { fail!() }
     fn releasedir_is_implemented(&self) -> bool { false }
-    fn fsyncdir(&self, _ino: fuse::fuse_ino_t, _datasync: bool, _fh: u64) -> ErrnoResult<()> { fail!() }
+    fn fsyncdir(&self, _ino: fuse_ino_t, _datasync: bool, _fh: u64) -> ErrnoResult<()> { fail!() }
     fn fsyncdir_is_implemented(&self) -> bool { false }
-    fn statfs(&self, _ino: fuse::fuse_ino_t) -> ErrnoResult<fuse::Struct_statvfs> { fail!() }
+    fn statfs(&self, _ino: fuse_ino_t) -> ErrnoResult<Struct_statvfs> { fail!() }
     fn statfs_is_implemented(&self) -> bool { false }
-    fn setxattr(&self, _ino: fuse::fuse_ino_t, _name: &str, _value: &[u8], _flags: int) -> ErrnoResult<()> { fail!() }
+    fn setxattr(&self, _ino: fuse_ino_t, _name: &str, _value: &[u8], _flags: int) -> ErrnoResult<()> { fail!() }
     fn setxattr_is_implemented(&self) -> bool { false }
     // TODO: examine this--ReadReply may not be appropraite here;
-    fn getxattr(&self, _ino: fuse::fuse_ino_t, _name: &str, _size: size_t) -> ErrnoResult<ReadReply> { fail!() }
+    fn getxattr(&self, _ino: fuse_ino_t, _name: &str, _size: size_t) -> ErrnoResult<ReadReply> { fail!() }
     fn getxattr_is_implemented(&self) -> bool { false }
     // Called on getxattr with size of zero (meaning a query of total size);
-    fn getxattr_size(&self, _ino: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<size_t> { fail!() }
+    fn getxattr_size(&self, _ino: fuse_ino_t, _name: &str) -> ErrnoResult<size_t> { fail!() }
     // TODO: examine this--ReadReply may not be appropraite here;
-    fn listxattr(&self, _ino: fuse::fuse_ino_t, _name: &str, _size: size_t) -> ErrnoResult<ReadReply> { fail!() }
+    fn listxattr(&self, _ino: fuse_ino_t, _name: &str, _size: size_t) -> ErrnoResult<ReadReply> { fail!() }
     fn listxattr_is_implemented(&self) -> bool { false }
     // Called on listxattr with size of zero (meaning a query of total size);
-    fn listxattr_size(&self, _ino: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<size_t> { fail!() }
-    fn removexattr(&self, _ino: fuse::fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
+    fn listxattr_size(&self, _ino: fuse_ino_t, _name: &str) -> ErrnoResult<size_t> { fail!() }
+    fn removexattr(&self, _ino: fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
     fn removexattr_is_implemented(&self) -> bool { false }
-    fn access(&self, _ino: fuse::fuse_ino_t, _mask: c_int) -> ErrnoResult<()> { fail!() }
+    fn access(&self, _ino: fuse_ino_t, _mask: c_int) -> ErrnoResult<()> { fail!() }
     fn access_is_implemented(&self) -> bool { false }
-    fn create(&self, _ino: fuse::fuse_ino_t, _parent: fuse::fuse_ino_t, _name: &str, _mode: mode_t, _flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
+    fn create(&self, _ino: fuse_ino_t, _parent: fuse_ino_t, _name: &str, _mode: mode_t, _flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
     fn create_is_implemented(&self) -> bool { false }
 
     // TODO: The following, which didn't even exist in earlier versions of FUSE,
@@ -191,16 +190,17 @@ fn userdata_to_ops<Ops:FuseLowLevelOps,Result>(userdata:*mut c_void,
     }
 }
 
+#[fixed_stack_segment]
 pub fn fuse_main_thin<Ops:FuseLowLevelOps+Send>(args:~[~str], ops:~Ops) {
     unsafe {
         let arg_c_strs_ptrs: ~[*c_schar] = args.map(|s| s.to_c_str().unwrap() );
-        let mut fuse_args = fuse::Struct_fuse_args {
+        let mut fuse_args = Struct_fuse_args {
             argv: transmute(vec::raw::to_ptr(arg_c_strs_ptrs)),
             argc: args.len() as c_int,
             allocated: 0
         };
         let mut mountpoint:*mut c_schar = ptr::mut_null();
-        if fuse::fuse_parse_cmdline(ptr::to_mut_unsafe_ptr(&mut fuse_args),
+        if fuse_parse_cmdline(ptr::to_mut_unsafe_ptr(&mut fuse_args),
                               ptr::to_mut_unsafe_ptr(&mut mountpoint),
                               ptr::mut_null(), // multithreaded--we ignore
                               ptr::mut_null() // foreground--we ignore (for now)
@@ -208,7 +208,7 @@ pub fn fuse_main_thin<Ops:FuseLowLevelOps+Send>(args:~[~str], ops:~Ops) {
             return;
         }
         
-        let fuse_chan = fuse::fuse_mount(mountpoint as *c_schar, ptr::to_mut_unsafe_ptr(&mut fuse_args));
+        let fuse_chan = fuse_mount(mountpoint as *c_schar, ptr::to_mut_unsafe_ptr(&mut fuse_args));
         if fuse_chan == ptr::null() {
             // TODO: better error message?
             stderr().write_line("Failed to mount\n");
@@ -216,9 +216,9 @@ pub fn fuse_main_thin<Ops:FuseLowLevelOps+Send>(args:~[~str], ops:~Ops) {
         }
         
         let llo = make_fuse_ll_oper(ops);
-        let fuse_session = fuse::fuse_lowlevel_new(ptr::to_mut_unsafe_ptr(&mut fuse_args),
+        let fuse_session = fuse_lowlevel_new(ptr::to_mut_unsafe_ptr(&mut fuse_args),
                                              ptr::to_unsafe_ptr(&llo),
-                                             size_of::<fuse::Struct_fuse_lowlevel_ops>() as size_t,
+                                             size_of::<Struct_fuse_lowlevel_ops>() as size_t,
                                              ptr::to_unsafe_ptr(&ops) as *mut c_void);
         if fuse_session == ptr::null() {
             // TODO: better error message?
@@ -226,26 +226,26 @@ pub fn fuse_main_thin<Ops:FuseLowLevelOps+Send>(args:~[~str], ops:~Ops) {
             fail!();
         }
         
-        if fuse::fuse_set_signal_handlers(fuse_session) == -1 {
+        if fuse_set_signal_handlers(fuse_session) == -1 {
             stderr().write_line("Failed to set FUSE signal handlers");
             fail!();
         }
 
-        fuse::fuse_session_add_chan(fuse_session, fuse_chan);
-        fuse::fuse_session_loop(fuse_session);
-        fuse::fuse_remove_signal_handlers(fuse_session);
-        fuse::fuse_session_remove_chan(fuse_chan);
+        fuse_session_add_chan(fuse_session, fuse_chan);
+        fuse_session_loop(fuse_session);
+        fuse_remove_signal_handlers(fuse_session);
+        fuse_session_remove_chan(fuse_chan);
 
-        fuse::fuse_session_destroy(fuse_session);
-        fuse::fuse_unmount(mountpoint as *c_schar, fuse_chan);
-        fuse::fuse_opt_free_args(ptr::to_mut_unsafe_ptr(&mut fuse_args));
+        fuse_session_destroy(fuse_session);
+        fuse_unmount(mountpoint as *c_schar, fuse_chan);
+        fuse_opt_free_args(ptr::to_mut_unsafe_ptr(&mut fuse_args));
     };
 }
 
 
 pub fn make_fuse_ll_oper<Ops:FuseLowLevelOps+Send>(ops:&Ops)
-    -> fuse::Struct_fuse_lowlevel_ops {
-    return fuse::Struct_fuse_lowlevel_ops {
+    -> Struct_fuse_lowlevel_ops {
+    return Struct_fuse_lowlevel_ops {
         init: if ops.init_is_implemented() { init_impl } else { ptr::null() },
         destroy: if ops.destroy_is_implemented() { destroy_impl } else { ptr::null() },
         lookup: if ops.lookup_is_implemented() { lookup_impl } else { ptr::null() },
@@ -292,38 +292,47 @@ pub fn make_fuse_ll_oper<Ops:FuseLowLevelOps+Send>(ops:&Ops)
     }
 }
 
-fn run_for_reply<Ops:FuseLowLevelOps+Send, Reply>(req:fuse::fuse_req_t, 
-                                                  reply_success:~fn(req:fuse::fuse_req_t, reply:Reply),
+type ReplySuccessFn<T> = ~fn(req:fuse_req_t, reply:T);
+
+#[fixed_stack_segment]
+fn send_fuse_reply<T>(result:ErrnoResult<T>, req:fuse_req_t, 
+                    reply_success:ReplySuccessFn<T>) {
+    match result {
+        Ok(reply) => reply_success(req, reply),
+        Err(errno) => unsafe { fuse_reply_err(req, errno); },
+    };
+}
+
+#[fixed_stack_segment]
+fn run_for_reply<Ops:FuseLowLevelOps+Send, Reply>(req:fuse_req_t, 
+                                                  reply_success:ReplySuccessFn<Reply>,
                                                   do_op:~fn(~Ops) -> ErrnoResult<Reply>) {
     unsafe {
         // Need to use a cell to pass ownership of do_op through a closure.
         // This is how spawn_with does it...
         let fns_cell = cell::Cell::new((reply_success, do_op));
-        do userdata_to_ops(fuse::fuse_req_userdata(req)) |ops:&Ops| {
+        do userdata_to_ops(fuse_req_userdata(req)) |ops:&Ops| {
             let dupe:~Ops = ~ops.clone();
             let (reply_success, do_op) = fns_cell.take();
             do task().spawn_with((dupe, reply_success, do_op)) |tuple: 
-                (~Ops, 
-                 ~fn(fuse::fuse_req_t, Reply), 
-                 ~fn(~Ops) -> ErrnoResult<Reply>)| {
+                (~Ops,
+                 ReplySuccessFn<Reply>, 
+                 ~fn(~Ops) -> ErrnoResult<Reply>)|  {
                 let (ops, reply_success, do_op) = tuple;
-                match do_op(ops) {
-                    Ok(reply) => reply_success(req, reply),
-                    Err(errno) => { fuse::fuse_reply_err(req, errno); },
-                }
-                
+                send_fuse_reply(do_op(ops), req, reply_success)
             }
         }
     }
 }
 
-fn reply_entryparam(req: fuse::fuse_req_t, reply:fuse::Struct_fuse_entry_param) {
+#[fixed_stack_segment]
+fn reply_entryparam(req: fuse_req_t, reply:Struct_fuse_entry_param) {
     unsafe {
-        fuse::fuse_reply_entry(req, ptr::to_unsafe_ptr(&reply));
+        fuse_reply_entry(req, ptr::to_unsafe_ptr(&reply));
     }
 }
 
-extern fn init_impl<Ops:FuseLowLevelOps+Send>(userdata:*mut c_void, _conn:*fuse::Struct_fuse_conn_info) {
+extern fn init_impl<Ops:FuseLowLevelOps+Send>(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
     do userdata_to_ops(userdata) |ops:&Ops| { ops.init() }
 }
 
@@ -331,8 +340,8 @@ extern fn destroy_impl<Ops:FuseLowLevelOps+Send>(userdata:*mut c_void) {
     do userdata_to_ops(userdata) |ops:&Ops| { ops.destroy() }
 }
 
-extern fn lookup_impl<Ops:FuseLowLevelOps+Send>(req:fuse::fuse_req_t, 
-                                           parent:fuse::fuse_ino_t, 
+extern fn lookup_impl<Ops:FuseLowLevelOps+Send>(req:fuse_req_t, 
+                                           parent:fuse_ino_t, 
                                            name:*c_schar) {
     do run_for_reply(req, reply_entryparam) |ops:~Ops| {
         unsafe {

@@ -8,3 +8,4 @@ vers = "dev")];
 #[crate_type = "lib"];
 
 pub mod thin;
+mod fuse;
