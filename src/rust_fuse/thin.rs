@@ -20,7 +20,6 @@ use std::ptr;
 use std::vec;
 use std::task::task;
 use std::c_str::CString;
-use std::cell;
 use fuse::*;
 
 /// Information to be returned from open
@@ -34,14 +33,6 @@ pub struct OpenReply {
 pub struct AttrReply {
     attr: stat,
     attr_timeout: c_double
-}
-
-pub struct EntryReply {
-    ino: fuse_ino_t,
-    generation: c_ulong,
-    attr: stat,
-    attr_timeout: c_double,
-    entry_timeout: c_double
 }
 
 pub enum AttrToSet {
@@ -102,9 +93,9 @@ pub trait FuseLowLevelOps {
     fn setattr_is_implemented(&self) -> bool { false }
     fn readlink(&self, _ino: fuse_ino_t) -> ErrnoResult<~str> { fail!() }
     fn readlink_is_implemented(&self) -> bool { false }
-    fn mknod(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t, _rdev: dev_t) -> ErrnoResult<EntryReply> { fail!() }
+    fn mknod(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t, _rdev: dev_t) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
     fn mknod_is_implemented(&self) -> bool { false }
-    fn mkdir(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t) -> ErrnoResult<EntryReply> { fail!() }
+    fn mkdir(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
     fn mkdir_is_implemented(&self) -> bool { false }
     // TODO: Using the unit type with result seems kind of goofy, but;
     // is done for consistency with the others.  Is this right?;
@@ -112,11 +103,11 @@ pub trait FuseLowLevelOps {
     fn unlink_is_implemented(&self) -> bool { false }
     fn rmdir(&self, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
     fn rmdir_is_implemented(&self) -> bool { false }
-    fn symlink(&self, _link:&str, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<EntryReply> { fail!() }
+    fn symlink(&self, _link:&str, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
     fn symlink_is_implemented(&self) -> bool { false }
     fn rename(&self, _parent: fuse_ino_t, _name: &str, _newparent: fuse_ino_t, _newname: &str) -> ErrnoResult<()> { fail!() }
     fn rename_is_implemented(&self) -> bool { false }
-    fn link(&self, _ino: fuse_ino_t, _newparent: fuse_ino_t, _newname: &str) -> ErrnoResult<EntryReply> { fail!() }
+    fn link(&self, _ino: fuse_ino_t, _newparent: fuse_ino_t, _newname: &str) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
     fn link_is_implemented(&self) -> bool { false }
     fn open(&self, _ino: fuse_ino_t, _flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
     fn open_is_implemented(&self) -> bool { false }
@@ -181,12 +172,15 @@ pub trait FuseLowLevelOps {
 }
 
 /**
-* Run a function with a borrowed pointer to the FuseLowLevelOps object pointed to by the given userdata pointer.
+* Run a function with a borrowed pointer to the FuseLowLevelOps object pointed
+* to by the given userdata pointer.  The "arg" parameter is for passing extra
+* data into the function a la task::spawn_with (needed to push owned pointers
+* into the closure)
 */
-fn userdata_to_ops<T>(userdata:*mut c_void, 
-                      func:&fn(&FuseLowLevelOps) -> T) -> T {
+fn userdata_to_ops<T, U>(userdata:*mut c_void, arg:U,
+                      func:&fn(&FuseLowLevelOps, U) -> T) -> T {
     unsafe {
-        func(*(userdata as *~FuseLowLevelOps))
+        func(*(userdata as *~FuseLowLevelOps), arg)
     }
 }
 
@@ -311,12 +305,18 @@ fn run_for_reply<T>(req:fuse_req_t, reply_success:ReplySuccessFn<T>,
     }
     unsafe {
         do task().spawn_with((reply_success, do_op)) |(reply_success, do_op)| {
-            let rscell = cell::Cell::new(reply_success);
-            do userdata_to_ops(call_fuse_req_userdata(req)) |ops| {
-                send_fuse_reply(do_op(ops), req, rscell.take())
+            do userdata_to_ops(call_fuse_req_userdata(req), reply_success)
+                |ops, reply_success| {
+                send_fuse_reply(do_op(ops), req, reply_success)
             }
         }
     }
+}
+
+#[inline]
+unsafe fn cptr_to_str(cptr:*c_schar) -> ~str {
+    let cstr = CString::new(cptr,false);
+    cstr.as_bytes().to_str()
 }
 
 #[fixed_stack_segment]
@@ -327,18 +327,17 @@ fn reply_entryparam(req: fuse_req_t, reply:Struct_fuse_entry_param) {
 }
 
 extern fn init_impl(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
-    do userdata_to_ops(userdata) |ops| { ops.init() }
+    do userdata_to_ops(userdata, ()) |ops, _| { ops.init() }
 }
 
 extern fn destroy_impl(userdata:*mut c_void) {
-    do userdata_to_ops(userdata) |ops| { ops.destroy() }
+    do userdata_to_ops(userdata, ()) |ops, _| { ops.destroy() }
 }
 
 extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
     do run_for_reply(req, reply_entryparam) |ops| {
         unsafe {
-            let cstr = CString::new(name,false);
-            ops.lookup(parent, cstr.as_bytes().to_str())
+            ops.lookup(parent, cptr_to_str(name))
         }
     }
 }
@@ -351,19 +350,47 @@ extern fn setattr_impl() { fail!() }
 
 extern fn readlink_impl() { fail!() }
 
-extern fn mknod_impl() { fail!() }
+extern fn mknod_impl(req:fuse_req_t, parent: fuse_ino_t, name:*c_schar,
+                     mode: mode_t, rdev: dev_t) {
+    do run_for_reply(req, reply_entryparam) |ops| {
+        unsafe {
+            ops.mknod(parent, cptr_to_str(name), mode, rdev)
+        }
+    }
+}
 
-extern fn mkdir_impl() { fail!() }
+extern fn mkdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar, 
+                     mode:mode_t) {
+    do run_for_reply(req, reply_entryparam) |ops| {
+        unsafe {
+            ops.mkdir(parent, cptr_to_str(name), mode)
+        }
+    }
+}
 
 extern fn unlink_impl() { fail!() }
 
 extern fn rmdir_impl() { fail!() }
 
-extern fn symlink_impl() { fail!() }
+extern fn symlink_impl(req: fuse_req_t, link: *c_schar, parent: fuse_ino_t,
+                       name: *c_schar) {
+    do run_for_reply(req, reply_entryparam) |ops| {
+        unsafe {
+            ops.symlink(cptr_to_str(link), parent, cptr_to_str(name))
+        }
+    }
+}
 
 extern fn rename_impl() { fail!() }
 
-extern fn link_impl() { fail!() }
+extern fn link_impl(req: fuse_req_t, ino: fuse_ino_t, newparent: fuse_ino_t,
+                    newname: *c_schar) {
+    do run_for_reply(req, reply_entryparam) |ops| {
+        unsafe {
+            ops.link(ino, newparent, cptr_to_str(newname))
+        }
+    }
+}
 
 extern fn open_impl() { fail!() }
 

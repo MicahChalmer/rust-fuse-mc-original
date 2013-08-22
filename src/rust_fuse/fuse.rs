@@ -107,7 +107,7 @@ pub type fuse_req_t = *mut Struct_fuse_req;
 pub struct Struct_fuse_entry_param {
     ino: fuse_ino_t,
     generation: c_ulong,
-    attr: Struct_stat,
+    attr: stat,
     attr_timeout: c_double,
     entry_timeout: c_double,
 }
