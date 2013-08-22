@@ -67,7 +67,7 @@ type ErrnoResult<T> = Result<T, c_int>;
 
 /**
  * Trait for "thin" interface to low-level FUSE ops.
-
+ *
  * It would be best if a user of this could just implement the methods as
  * desired, and leave the rest as defaults, and have this interface take care of
  * the rest.  Unfortunately that's not quite possible.  FUSE has default
@@ -76,7 +76,7 @@ type ErrnoResult<T> = Result<T, c_int>;
  * fuse_lowlevel_ops structure.  But we can't know at run time which default
  * methods of a trait were overridden, which means we don't know which entries
  * in the Struct_fuse_lowlevel_ops to null out.
-
+ *
  * Instead, we've got a corresponding "is_implemented" method for each one.
  * Define it to return true for each real method you implement.  _BLEAH!  YUCK!
  * UGH!_ If you return true from an "is_implemented" method, but don't implement
@@ -179,7 +179,7 @@ pub trait FuseLowLevelOps {
     // fallocate
 }
 
-/**
+/*
 * Run a function with a borrowed pointer to the FuseLowLevelOps object pointed
 * to by the given userdata pointer.  The "arg" parameter is for passing extra
 * data into the function a la task::spawn_with (needed to push owned pointers
