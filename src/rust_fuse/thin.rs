@@ -87,7 +87,7 @@ type ErrnoResult<T> = Result<T, c_int>;
  * callback, which FUSE does not have.
 
  */
-pub trait FuseLowLevelOps:Clone+Send {
+pub trait FuseLowLevelOps {
     fn init(&self) { fail!() }
     fn init_is_implemented(&self) -> bool { false }
     fn destroy(&self) { fail!() }
@@ -183,15 +183,15 @@ pub trait FuseLowLevelOps:Clone+Send {
 /**
 * Run a function with a borrowed pointer to the FuseLowLevelOps object pointed to by the given userdata pointer.
 */
-fn userdata_to_ops<Ops:FuseLowLevelOps,Result>(userdata:*mut c_void,
-                      func:&fn(&Ops) -> Result) -> Result {
+fn userdata_to_ops<T>(userdata:*mut c_void, 
+                      func:&fn(&FuseLowLevelOps) -> T) -> T {
     unsafe {
-        func(&*(userdata as *Ops))
+        func(*(userdata as *~FuseLowLevelOps))
     }
 }
 
 #[fixed_stack_segment]
-pub fn fuse_main_thin<Ops:FuseLowLevelOps+Send>(args:~[~str], ops:~Ops) {
+pub fn fuse_main_thin(args:~[~str], ops:~FuseLowLevelOps) {
     unsafe {
         let arg_c_strs_ptrs: ~[*c_schar] = args.map(|s| s.to_c_str().unwrap() );
         let mut fuse_args = Struct_fuse_args {
@@ -243,7 +243,7 @@ pub fn fuse_main_thin<Ops:FuseLowLevelOps+Send>(args:~[~str], ops:~Ops) {
 }
 
 
-pub fn make_fuse_ll_oper<Ops:FuseLowLevelOps+Send>(ops:&Ops)
+pub fn make_fuse_ll_oper(ops:&FuseLowLevelOps)
     -> Struct_fuse_lowlevel_ops {
     return Struct_fuse_lowlevel_ops {
         init: if ops.init_is_implemented() { init_impl } else { ptr::null() },
@@ -303,23 +303,17 @@ fn send_fuse_reply<T>(result:ErrnoResult<T>, req:fuse_req_t,
     };
 }
 
-#[fixed_stack_segment]
-fn run_for_reply<Ops:FuseLowLevelOps+Send, Reply>(req:fuse_req_t, 
-                                                  reply_success:ReplySuccessFn<Reply>,
-                                                  do_op:~fn(~Ops) -> ErrnoResult<Reply>) {
+fn run_for_reply<T>(req:fuse_req_t, reply_success:ReplySuccessFn<T>,
+                    do_op:~fn(&FuseLowLevelOps) -> ErrnoResult<T>) {
+    #[fixed_stack_segment] 
+    unsafe fn call_fuse_req_userdata(req:fuse_req_t) -> *mut c_void {
+        fuse_req_userdata(req)
+    }
     unsafe {
-        // Need to use a cell to pass ownership of do_op through a closure.
-        // This is how spawn_with does it...
-        let fns_cell = cell::Cell::new((reply_success, do_op));
-        do userdata_to_ops(fuse_req_userdata(req)) |ops:&Ops| {
-            let dupe:~Ops = ~ops.clone();
-            let (reply_success, do_op) = fns_cell.take();
-            do task().spawn_with((dupe, reply_success, do_op)) |tuple: 
-                (~Ops,
-                 ReplySuccessFn<Reply>, 
-                 ~fn(~Ops) -> ErrnoResult<Reply>)|  {
-                let (ops, reply_success, do_op) = tuple;
-                send_fuse_reply(do_op(ops), req, reply_success)
+        do task().spawn_with((reply_success, do_op)) |(reply_success, do_op)| {
+            let rscell = cell::Cell::new(reply_success);
+            do userdata_to_ops(call_fuse_req_userdata(req)) |ops| {
+                send_fuse_reply(do_op(ops), req, rscell.take())
             }
         }
     }
@@ -332,18 +326,16 @@ fn reply_entryparam(req: fuse_req_t, reply:Struct_fuse_entry_param) {
     }
 }
 
-extern fn init_impl<Ops:FuseLowLevelOps+Send>(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
-    do userdata_to_ops(userdata) |ops:&Ops| { ops.init() }
+extern fn init_impl(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
+    do userdata_to_ops(userdata) |ops| { ops.init() }
 }
 
-extern fn destroy_impl<Ops:FuseLowLevelOps+Send>(userdata:*mut c_void) {
-    do userdata_to_ops(userdata) |ops:&Ops| { ops.destroy() }
+extern fn destroy_impl(userdata:*mut c_void) {
+    do userdata_to_ops(userdata) |ops| { ops.destroy() }
 }
 
-extern fn lookup_impl<Ops:FuseLowLevelOps+Send>(req:fuse_req_t, 
-                                           parent:fuse_ino_t, 
-                                           name:*c_schar) {
-    do run_for_reply(req, reply_entryparam) |ops:~Ops| {
+extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
+    do run_for_reply(req, reply_entryparam) |ops| {
         unsafe {
             let cstr = CString::new(name,false);
             ops.lookup(parent, cstr.as_bytes().to_str())
