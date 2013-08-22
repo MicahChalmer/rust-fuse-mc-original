@@ -333,6 +333,29 @@ fn reply_attr(req: fuse_req_t, reply: AttrReply) {
     }
 }
 
+#[fixed_stack_segment]
+fn reply_none(req: fuse_req_t, _arg:()) {
+    unsafe {
+        fuse_reply_none(req);
+    }
+}
+
+#[fixed_stack_segment]
+fn reply_readlink(req: fuse_req_t, link:~str) {
+    do link.with_c_str() |c_link| {
+        unsafe {
+            fuse_reply_readlink(req, c_link);
+        }
+    }
+}
+
+#[fixed_stack_segment]
+fn reply_zero_err(req: fuse_req_t, _arg:()) {
+    unsafe {
+        fuse_reply_err(req, 0);
+    }
+}
+
 extern fn init_impl(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
     do userdata_to_ops(userdata, ()) |ops, _| { ops.init() }
 }
@@ -349,7 +372,11 @@ extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
     }
 }
 
-extern fn forget_impl() { fail!() }
+extern fn forget_impl(req: fuse_req_t, ino: fuse_ino_t, nlookup:c_ulong) {
+    do run_for_reply(req, reply_none) |ops| {
+        ops.forget(ino, nlookup); Ok(())
+    }
+}
 
 extern fn getattr_impl(req:fuse_req_t, ino: fuse_ino_t,
                        _fi:*Struct_fuse_file_info) {
@@ -385,7 +412,11 @@ extern fn setattr_impl(req: fuse_req_t, ino: fuse_ino_t, attr:*stat,
     }
 }
 
-extern fn readlink_impl() { fail!() }
+extern fn readlink_impl(req: fuse_req_t, ino: fuse_ino_t) {
+    do run_for_reply(req, reply_readlink) |ops| {
+        ops.readlink(ino)
+    }
+}
 
 extern fn mknod_impl(req:fuse_req_t, parent: fuse_ino_t, name:*c_schar,
                      mode: mode_t, rdev: dev_t) {
@@ -405,9 +436,21 @@ extern fn mkdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar,
     }
 }
 
-extern fn unlink_impl() { fail!() }
+extern fn unlink_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.unlink(parent, cptr_to_str(name))
+        }
+    }
+}
 
-extern fn rmdir_impl() { fail!() }
+extern fn rmdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.rmdir(parent, cptr_to_str(name))
+        }
+    }
+}
 
 extern fn symlink_impl(req: fuse_req_t, link: *c_schar, parent: fuse_ino_t,
                        name: *c_schar) {
@@ -418,7 +461,15 @@ extern fn symlink_impl(req: fuse_req_t, link: *c_schar, parent: fuse_ino_t,
     }
 }
 
-extern fn rename_impl() { fail!() }
+extern fn rename_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar, newparent: fuse_ino_t,
+                       newname: *c_schar) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.rename(parent, cptr_to_str(name), newparent,
+                       cptr_to_str(newname))
+        }
+    }
+}
 
 extern fn link_impl(req: fuse_req_t, ino: fuse_ino_t, newparent: fuse_ino_t,
                     newname: *c_schar) {
