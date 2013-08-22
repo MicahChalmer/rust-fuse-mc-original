@@ -2,6 +2,7 @@ use std::libc::{
     c_double,
     c_int,
     c_schar,
+    c_uint,
     c_ulong,
     c_void,
     dev_t,
@@ -20,6 +21,8 @@ use std::ptr;
 use std::vec;
 use std::task::task;
 use std::c_str::CString;
+use std::num::zero;
+use std::bool::to_bit;
 use fuse::*;
 
 /// Information to be returned from open
@@ -28,6 +31,11 @@ pub struct OpenReply {
     direct_io:bool,
     keep_cache:bool,
     fh: u64
+}
+
+pub struct CreateReply {
+    open_reply: OpenReply,
+    entry_param: Struct_fuse_entry_param
 }
 
 pub struct AttrReply {
@@ -136,7 +144,7 @@ pub trait FuseLowLevelOps {
     fn fsyncdir_is_implemented(&self) -> bool { false }
     fn statfs(&self, _ino: fuse_ino_t) -> ErrnoResult<Struct_statvfs> { fail!() }
     fn statfs_is_implemented(&self) -> bool { false }
-    fn setxattr(&self, _ino: fuse_ino_t, _name: &str, _value: &[u8], _flags: int) -> ErrnoResult<()> { fail!() }
+    fn setxattr(&self, _ino: fuse_ino_t, _name: &str, _value: &[u8], _flags: c_int) -> ErrnoResult<()> { fail!() }
     fn setxattr_is_implemented(&self) -> bool { false }
     // TODO: examine this--ReadReply may not be appropraite here;
     fn getxattr(&self, _ino: fuse_ino_t, _name: &str, _size: size_t) -> ErrnoResult<ReadReply> { fail!() }
@@ -144,15 +152,15 @@ pub trait FuseLowLevelOps {
     // Called on getxattr with size of zero (meaning a query of total size);
     fn getxattr_size(&self, _ino: fuse_ino_t, _name: &str) -> ErrnoResult<size_t> { fail!() }
     // TODO: examine this--ReadReply may not be appropraite here;
-    fn listxattr(&self, _ino: fuse_ino_t, _name: &str, _size: size_t) -> ErrnoResult<ReadReply> { fail!() }
+    fn listxattr(&self, _ino: fuse_ino_t, _size: size_t) -> ErrnoResult<ReadReply> { fail!() }
     fn listxattr_is_implemented(&self) -> bool { false }
     // Called on listxattr with size of zero (meaning a query of total size);
-    fn listxattr_size(&self, _ino: fuse_ino_t, _name: &str) -> ErrnoResult<size_t> { fail!() }
+    fn listxattr_size(&self, _ino: fuse_ino_t) -> ErrnoResult<size_t> { fail!() }
     fn removexattr(&self, _ino: fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
     fn removexattr_is_implemented(&self) -> bool { false }
     fn access(&self, _ino: fuse_ino_t, _mask: c_int) -> ErrnoResult<()> { fail!() }
     fn access_is_implemented(&self) -> bool { false }
-    fn create(&self, _ino: fuse_ino_t, _parent: fuse_ino_t, _name: &str, _mode: mode_t, _flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
+    fn create(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t, _flags: c_int) -> ErrnoResult<CreateReply> { fail!() }
     fn create_is_implemented(&self) -> bool { false }
 
     // TODO: The following, which didn't even exist in earlier versions of FUSE,
@@ -356,6 +364,64 @@ fn reply_zero_err(req: fuse_req_t, _arg:()) {
     }
 }
 
+fn openreply_to_fileinfo(reply: OpenReply) -> Struct_fuse_file_info {
+    Struct_fuse_file_info{
+        direct_io: to_bit(reply.direct_io) as c_uint,
+        keep_cache: to_bit(reply.keep_cache) as c_uint,
+        fh: reply.fh,
+        ..zero()
+    }
+}
+
+#[fixed_stack_segment]
+fn reply_open(req: fuse_req_t, reply: OpenReply) {
+    unsafe {
+        let fi = openreply_to_fileinfo(reply);
+        fuse_reply_open(req, ptr::to_unsafe_ptr(&fi));
+    }
+}
+
+#[fixed_stack_segment]
+fn reply_create(req: fuse_req_t, reply: CreateReply) {
+    unsafe {
+        let fi = openreply_to_fileinfo(reply.open_reply);
+        fuse_reply_create(req, ptr::to_unsafe_ptr(&(reply.entry_param)),
+                          ptr::to_unsafe_ptr(&fi));
+    }
+}
+
+#[fixed_stack_segment]
+fn reply_read(req: fuse_req_t, reply: ReadReply) {
+    unsafe {
+        match reply {
+            DataBuffer(vec) => {
+                fuse_reply_buf(req, vec::raw::to_ptr(vec) as *c_schar, vec.len() as u64);
+            }
+        }
+    }
+}
+
+#[fixed_stack_segment]
+fn reply_write(req: fuse_req_t, count: size_t) {
+    unsafe {
+        fuse_reply_write(req, count);
+    }
+}
+
+#[fixed_stack_segment]
+fn reply_statfs(req: fuse_req_t, statfs: Struct_statvfs) {
+    unsafe {
+        fuse_reply_statfs(req, ptr::to_unsafe_ptr(&statfs));
+    }
+}
+
+#[fixed_stack_segment]
+fn reply_xattr(req: fuse_req_t, size: size_t) {
+    unsafe {
+        fuse_reply_xattr(req, size);
+    }
+}
+
 extern fn init_impl(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
     do userdata_to_ops(userdata, ()) |ops, _| { ops.init() }
 }
@@ -480,36 +546,161 @@ extern fn link_impl(req: fuse_req_t, ino: fuse_ino_t, newparent: fuse_ino_t,
     }
 }
 
-extern fn open_impl() { fail!() }
+extern fn open_impl(req: fuse_req_t, ino: fuse_ino_t,
+                    fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_open) |ops| {
+        unsafe {
+            ops.open(ino, (*fi).flags)
+        }
+    }
+}
 
-extern fn read_impl() { fail!() }
+extern fn read_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t, off: off_t,
+                    fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_read) |ops| {
+        unsafe {
+            ops.read(ino, size, off, (*fi).fh)
+        }
+    }
+}
 
-extern fn write_impl() { fail!() }
+extern fn write_impl(req: fuse_req_t, ino: fuse_ino_t, buf: *u8,
+                     size: size_t, off: off_t, fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_write) |ops| {
+        unsafe {
+            do vec::raw::buf_as_slice(buf, size as uint) |vec| {
+                ops.write(ino, vec, off, (*fi).fh, ((*fi).writepage != 0))
+            }
+        }
+    }
+}
 
-extern fn flush_impl() { fail!() }
+extern fn flush_impl(req: fuse_req_t, ino: fuse_ino_t,
+                     fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.flush(ino, (*fi).lock_owner, (*fi).fh)
+        }
+    }
+}
 
-extern fn release_impl() { fail!() }
+extern fn release_impl(req: fuse_req_t, ino: fuse_ino_t,
+                       fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.release(ino, (*fi).flags, (*fi).fh)
+        }
+    }
+}
 
-extern fn fsync_impl() { fail!() }
+extern fn fsync_impl(req: fuse_req_t, ino: fuse_ino_t, datasync: c_int,
+                     fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.fsync(ino, (datasync != 0), (*fi).fh)
+        }
+    }
+}
 
-extern fn opendir_impl() { fail!() }
+extern fn opendir_impl(req: fuse_req_t, ino: fuse_ino_t,
+                     _fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_open) |ops| {
+        ops.opendir(ino)
+    }
+}
 
-extern fn readdir_impl() { fail!() }
+extern fn readdir_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t, off: off_t,
+                    fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_read) |ops| {
+        unsafe {
+            ops.read(ino, size, off, (*fi).fh)
+        }
+    }
+}
 
-extern fn releasedir_impl() { fail!() }
+extern fn releasedir_impl(req: fuse_req_t, ino: fuse_ino_t,
+                       fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.releasedir(ino, (*fi).fh)
+        }
+    }
+}
 
-extern fn fsyncdir_impl() { fail!() }
+extern fn fsyncdir_impl(req: fuse_req_t, ino: fuse_ino_t, datasync: c_int,
+                     fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.fsyncdir(ino, (datasync != 0), (*fi).fh)
+        }
+    }
+}
 
-extern fn statfs_impl() { fail!() }
+extern fn statfs_impl(req: fuse_req_t, ino: fuse_ino_t) {
+    do run_for_reply(req, reply_statfs) |ops| {
+        ops.statfs(ino)
+    }
+}
 
-extern fn setxattr_impl() { fail!() }
+extern fn setxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
+                        value: *u8, size: size_t, flags: c_int) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            do vec::raw::buf_as_slice(value, size as uint) |vec| {
+                ops.setxattr(ino, cptr_to_str(name), vec, flags)
+            }
+        }
+    }
+}
 
-extern fn getxattr_impl() { fail!() }
+extern fn getxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
+                        size: size_t) {
+    if size == 0 {
+        do run_for_reply(req, reply_xattr) |ops| {
+            unsafe {
+                ops.getxattr_size(ino, cptr_to_str(name))
+            }
+        }
+    } else {
+        do run_for_reply(req, reply_read) |ops| {
+            unsafe {
+                ops.getxattr(ino, cptr_to_str(name), size)
+            }
+        }
+    }
+}
 
-extern fn listxattr_impl() { fail!() }
+extern fn listxattr_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t) {
+    if size == 0 {
+        do run_for_reply(req, reply_xattr) |ops| {
+            ops.listxattr_size(ino)
+        }
+    } else {
+        do run_for_reply(req, reply_read) |ops| {
+            ops.listxattr(ino, size)
+        }
+    }
+}
 
-extern fn removexattr_impl() { fail!() }
+extern fn removexattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.removexattr(ino, cptr_to_str(name))
+        }
+    }
+}
 
-extern fn access_impl() { fail!() }
+extern fn access_impl(req: fuse_req_t, ino: fuse_ino_t, mask: c_int) {
+    do run_for_reply(req, reply_zero_err) |ops| {
+        ops.access(ino, mask)
+    }
+}
 
-extern fn create_impl() { fail!() }
+extern fn create_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar,
+                      mode: mode_t, fi: *Struct_fuse_file_info) {
+    do run_for_reply(req, reply_create) |ops| {
+        unsafe {
+            ops.create(parent, cptr_to_str(name), mode, (*fi).flags)
+        }
+    }
+}
