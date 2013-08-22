@@ -39,7 +39,7 @@ pub enum AttrToSet {
     Mode(mode_t),
     Uid(uid_t),
     Gid(gid_t),
-    Size(size_t),
+    Size(off_t),
     Atime(time_t),
     Mtime(time_t),
 
@@ -87,7 +87,7 @@ pub trait FuseLowLevelOps {
     fn lookup_is_implemented(&self) -> bool { false }
     fn forget(&self, _ino:fuse_ino_t, _nlookup:c_ulong) { fail!() }
     fn forget_is_implemented(&self) -> bool { false }
-    fn getattr(&self, _ino: fuse_ino_t, _flags: c_int) -> ErrnoResult<AttrReply> { fail!() }
+    fn getattr(&self, _ino: fuse_ino_t) -> ErrnoResult<AttrReply> { fail!() }
     fn getattr_is_implemented(&self) -> bool { false }
     fn setattr(&self, _ino: fuse_ino_t, _attrs_to_set:&[AttrToSet], _fh:Option<u64>) -> ErrnoResult<AttrReply> { fail!() }
     fn setattr_is_implemented(&self) -> bool { false }
@@ -326,6 +326,13 @@ fn reply_entryparam(req: fuse_req_t, reply:Struct_fuse_entry_param) {
     }
 }
 
+#[fixed_stack_segment]
+fn reply_attr(req: fuse_req_t, reply: AttrReply) {
+    unsafe {
+        fuse_reply_attr(req, ptr::to_unsafe_ptr(&reply.attr), reply.attr_timeout);
+    }
+}
+
 extern fn init_impl(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
     do userdata_to_ops(userdata, ()) |ops, _| { ops.init() }
 }
@@ -344,9 +351,39 @@ extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
 
 extern fn forget_impl() { fail!() }
 
-extern fn getattr_impl() { fail!() }
+extern fn getattr_impl(req:fuse_req_t, ino: fuse_ino_t,
+                       _fi:*Struct_fuse_file_info) {
+    do run_for_reply(req, reply_attr) |ops| {
+        ops.getattr(ino)
+    }
+}
 
-extern fn setattr_impl() { fail!() }
+extern fn setattr_impl(req: fuse_req_t, ino: fuse_ino_t, attr:*stat,
+                       to_set: int, fi: *Struct_fuse_file_info) {
+    static FUSE_SET_ATTR_MODE:int = (1 << 0);
+    static FUSE_SET_ATTR_UID:int = (1 << 1);
+    static FUSE_SET_ATTR_GID:int = (1 << 2);
+    static FUSE_SET_ATTR_SIZE:int = (1 << 3);
+    static FUSE_SET_ATTR_ATIME:int = (1 << 4);
+    static FUSE_SET_ATTR_MTIME:int = (1 << 5);
+    static FUSE_SET_ATTR_ATIME_NOW:int = (1 << 7);
+    static FUSE_SET_ATTR_MTIME_NOW:int = (1 << 8);
+    do run_for_reply(req, reply_attr) |ops| {
+        unsafe {
+            let mut attrs_to_set:~[AttrToSet] = vec::with_capacity(8);
+            if to_set & FUSE_SET_ATTR_MODE != 0 { attrs_to_set.push(Mode((*attr).st_mode)) }
+            if to_set & FUSE_SET_ATTR_UID != 0 { attrs_to_set.push(Uid((*attr).st_uid)) }
+            if to_set & FUSE_SET_ATTR_GID != 0 { attrs_to_set.push(Gid((*attr).st_gid)) }
+            if to_set & FUSE_SET_ATTR_SIZE != 0 { attrs_to_set.push(Size((*attr).st_size)) }
+            if to_set & FUSE_SET_ATTR_ATIME != 0 { attrs_to_set.push(Atime((*attr).st_atime)) }
+            if to_set & FUSE_SET_ATTR_MTIME != 0 { attrs_to_set.push(Mtime((*attr).st_mtime)) }
+            if to_set & FUSE_SET_ATTR_ATIME_NOW != 0 { attrs_to_set.push(Atime_now) }
+            if to_set & FUSE_SET_ATTR_MTIME_NOW != 0 { attrs_to_set.push(Mtime_now) }
+
+            ops.setattr(ino, attrs_to_set, fi.to_option().map(|fi| fi.fh))
+        }
+    }
+}
 
 extern fn readlink_impl() { fail!() }
 
