@@ -26,6 +26,7 @@ use std::bool::to_bit;
 use std::cmp;
 use std::iterator::AdditiveIterator;
 use fuse::*;
+pub use fuse::{fuse_ino_t,Struct_fuse_entry_param};
 
 /// Information to be returned from open
 #[deriving(Zero)]
@@ -72,9 +73,19 @@ pub struct DirEntry {
     next_offset: off_t
 }
 
+impl Clone for DirEntry {
+    fn clone(&self) -> DirEntry {
+        DirEntry {
+            ino: self.ino,
+            name: self.name.clone(),
+            attr: self.attr,
+            next_offset: self.next_offset
+        }
+    }
+}
+
 pub enum ReaddirReply {
     DirEntries(~[DirEntry]),
-    EODIR
 }
 
 pub type EntryReply = Struct_fuse_entry_param;
@@ -423,7 +434,6 @@ fn reply_read(req: fuse_req_t, reply: ReadReply) {
 fn reply_readdir(req: fuse_req_t, tuple: (size_t, ReaddirReply)) {
     let (size, reply) = tuple;
     match reply {
-        EODIR => reply_read(req, EOF),
         DirEntries(entries) => {
             // Alignment makes the size per entry not an exact function
             // of the length of the name, but this should be enough for
