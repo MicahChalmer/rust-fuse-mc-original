@@ -23,6 +23,8 @@ use std::task::task;
 use std::c_str::CString;
 use std::num::zero;
 use std::bool::to_bit;
+use std::cmp;
+use std::iterator::AdditiveIterator;
 use fuse::*;
 
 /// Information to be returned from open
@@ -35,7 +37,7 @@ pub struct OpenReply {
 
 pub struct CreateReply {
     open_reply: OpenReply,
-    entry_param: Struct_fuse_entry_param
+    entry_param: EntryReply
 }
 
 pub struct AttrReply {
@@ -59,11 +61,26 @@ pub enum AttrToSet {
 pub enum ReadReply {
     // TODO: support iov and fuse_bufvec type replies for more efficient (?)
     // types of implementation
-    DataBuffer(~[u8])
+    DataBuffer(~[u8]),
+    EOF
 }
 
+pub struct DirEntry {
+    ino: fuse_ino_t,
+    name: ~str,
+    attr: stat,
+    next_offset: off_t
+}
+
+pub enum ReaddirReply {
+    DirEntries(~[DirEntry]),
+    EODIR
+}
+
+pub type EntryReply = Struct_fuse_entry_param;
+
 /// The error result should be one of libc's errno values
-type ErrnoResult<T> = Result<T, c_int>;
+pub type ErrnoResult<T> = Result<T, c_int>;
 
 /**
  * Trait for "thin" interface to low-level FUSE ops.
@@ -91,7 +108,7 @@ pub trait FuseLowLevelOps {
     fn init_is_implemented(&self) -> bool { false }
     fn destroy(&self) { fail!() }
     fn destroy_is_implemented(&self) -> bool { false }
-    fn lookup(&self, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
+    fn lookup(&self, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<EntryReply> { fail!() }
     fn lookup_is_implemented(&self) -> bool { false }
     fn forget(&self, _ino:fuse_ino_t, _nlookup:c_ulong) { fail!() }
     fn forget_is_implemented(&self) -> bool { false }
@@ -101,9 +118,9 @@ pub trait FuseLowLevelOps {
     fn setattr_is_implemented(&self) -> bool { false }
     fn readlink(&self, _ino: fuse_ino_t) -> ErrnoResult<~str> { fail!() }
     fn readlink_is_implemented(&self) -> bool { false }
-    fn mknod(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t, _rdev: dev_t) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
+    fn mknod(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t, _rdev: dev_t) -> ErrnoResult<EntryReply> { fail!() }
     fn mknod_is_implemented(&self) -> bool { false }
-    fn mkdir(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
+    fn mkdir(&self, _parent: fuse_ino_t, _name: &str, _mode: mode_t) -> ErrnoResult<EntryReply> { fail!() }
     fn mkdir_is_implemented(&self) -> bool { false }
     // TODO: Using the unit type with result seems kind of goofy, but;
     // is done for consistency with the others.  Is this right?;
@@ -111,11 +128,11 @@ pub trait FuseLowLevelOps {
     fn unlink_is_implemented(&self) -> bool { false }
     fn rmdir(&self, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<()> { fail!() }
     fn rmdir_is_implemented(&self) -> bool { false }
-    fn symlink(&self, _link:&str, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
+    fn symlink(&self, _link:&str, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<EntryReply> { fail!() }
     fn symlink_is_implemented(&self) -> bool { false }
     fn rename(&self, _parent: fuse_ino_t, _name: &str, _newparent: fuse_ino_t, _newname: &str) -> ErrnoResult<()> { fail!() }
     fn rename_is_implemented(&self) -> bool { false }
-    fn link(&self, _ino: fuse_ino_t, _newparent: fuse_ino_t, _newname: &str) -> ErrnoResult<Struct_fuse_entry_param> { fail!() }
+    fn link(&self, _ino: fuse_ino_t, _newparent: fuse_ino_t, _newname: &str) -> ErrnoResult<EntryReply> { fail!() }
     fn link_is_implemented(&self) -> bool { false }
     fn open(&self, _ino: fuse_ino_t, _flags: c_int) -> ErrnoResult<OpenReply> { fail!() }
     fn open_is_implemented(&self) -> bool { false }
@@ -133,10 +150,7 @@ pub trait FuseLowLevelOps {
     fn fsync_is_implemented(&self) -> bool { false }
     fn opendir(&self, _ino: fuse_ino_t) -> ErrnoResult<OpenReply> { fail!() }
     fn opendir_is_implemented(&self) -> bool { false }
-    // TODO: Using a ReadReply would require the impl to do unsafe operations;
-    // to use fuse_add_direntry.  So even the thin interface needs something;
-    // else here.;
-    fn readdir(&self, _ino: fuse_ino_t, _size: size_t, _off: off_t, _fh: u64) -> ErrnoResult<ReadReply> { fail!() }
+    fn readdir(&self, _ino: fuse_ino_t, _size: size_t, _off: off_t, _fh: u64) -> ErrnoResult<ReaddirReply> { fail!() }
     fn readdir_is_implemented(&self) -> bool { false }
     fn releasedir(&self, _ino: fuse_ino_t, _fh: u64) -> ErrnoResult<()> { fail!() }
     fn releasedir_is_implemented(&self) -> bool { false }
@@ -193,7 +207,7 @@ fn userdata_to_ops<T, U>(userdata:*mut c_void, arg:U,
 }
 
 #[fixed_stack_segment]
-pub fn fuse_main_thin(args:~[~str], ops:~FuseLowLevelOps) {
+pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
     unsafe {
         let arg_c_strs_ptrs: ~[*c_schar] = args.map(|s| s.to_c_str().unwrap() );
         let mut fuse_args = Struct_fuse_args {
@@ -328,7 +342,7 @@ unsafe fn cptr_to_str(cptr:*c_schar) -> ~str {
 }
 
 #[fixed_stack_segment]
-fn reply_entryparam(req: fuse_req_t, reply:Struct_fuse_entry_param) {
+fn reply_entryparam(req: fuse_req_t, reply:EntryReply) {
     unsafe {
         fuse_reply_entry(req, ptr::to_unsafe_ptr(&reply));
     }
@@ -395,7 +409,54 @@ fn reply_read(req: fuse_req_t, reply: ReadReply) {
     unsafe {
         match reply {
             DataBuffer(vec) => {
-                fuse_reply_buf(req, vec::raw::to_ptr(vec) as *c_schar, vec.len() as u64);
+                fuse_reply_buf(req, vec::raw::to_ptr(vec) as *c_schar,
+                               vec.len() as size_t);
+            },
+            EOF => {
+                fuse_reply_buf(req, ptr::null(), 0);
+            }
+        }
+    }
+}
+
+#[fixed_stack_segment]
+fn reply_readdir(req: fuse_req_t, tuple: (size_t, ReaddirReply)) {
+    let (size, reply) = tuple;
+    match reply {
+        EODIR => reply_read(req, EOF),
+        DirEntries(entries) => {
+            // Alignment makes the size per entry not an exact function
+            // of the length of the name, but this should be enough for
+            // what's needed
+            static EXTRA_CAP_PER_ENTRY:size_t = 32;
+            let mut lengths = entries.iter().map(|x| x.name.len() as size_t);
+            let max_buf_size = lengths.sum() + 
+                (entries.len() as size_t*EXTRA_CAP_PER_ENTRY);
+            let buf_size = cmp::min(max_buf_size, size);
+            let mut buf: ~[u8] = vec::with_capacity(buf_size as uint);
+            let mut returned_size = 0 as size_t;
+            unsafe {
+                for entry in entries.iter() {
+                    let buf_ptr = ptr::mut_offset(vec::raw::to_mut_ptr(buf),
+                                                  returned_size as int);
+                    let remaining_size:size_t = buf_size - returned_size;
+                    let added_size =
+                        do entry.name.to_c_str().with_ref |name_cstr| { 
+                            fuse_add_direntry(req, 
+                                              buf_ptr as *mut c_schar,
+                                              remaining_size,
+                                              name_cstr,
+                                              ptr::to_unsafe_ptr(&entry.attr),
+                                              entry.next_offset)
+                    };
+                    if added_size <= remaining_size {
+                        returned_size += added_size;
+                    } else {
+                        break;
+                    }
+                }
+                fuse_reply_buf(req, vec::raw::to_ptr(buf) as *c_schar,
+                               buf.len() as size_t);
             }
         }
     }
@@ -611,10 +672,10 @@ extern fn opendir_impl(req: fuse_req_t, ino: fuse_ino_t,
 
 extern fn readdir_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t, off: off_t,
                     fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_read) |ops| {
+    do run_for_reply(req, reply_readdir) |ops| {
         unsafe {
-            ops.read(ino, size, off, (*fi).fh)
-        }
+            ops.readdir(ino, size, off, (*fi).fh)
+        }.chain(|rr| Ok((size, rr)))
     }
 }
 
