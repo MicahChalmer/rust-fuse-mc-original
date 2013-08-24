@@ -275,6 +275,8 @@ pub struct Struct_fuse_chan_ops_compat24 {
     send: *u8,
     destroy: *u8,
 }
+
+#[link_args ="-lfuse"]
 extern "C" {
     pub fn fuse_opt_parse(args: *mut Struct_fuse_args, data: *mut c_void,
                           opts: *Struct_fuse_opt, proc: fuse_opt_proc_t) ->
