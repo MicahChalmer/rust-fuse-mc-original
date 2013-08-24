@@ -19,7 +19,7 @@ use std::sys::size_of;
 use std::cast::transmute;
 use std::ptr;
 use std::vec;
-use std::task::task;
+use std::task::{task, SingleThreaded};
 use std::c_str::CString;
 use std::num::zero;
 use std::bool::to_bit;
@@ -27,6 +27,7 @@ use std::cmp;
 use std::iterator::AdditiveIterator;
 use fuse::*;
 pub use fuse::{fuse_ino_t,Struct_fuse_entry_param};
+use std::repr::*;
 
 /// Information to be returned from open
 #[deriving(Zero)]
@@ -219,6 +220,7 @@ fn userdata_to_ops<T, U>(userdata:*mut c_void, arg:U,
 
 #[fixed_stack_segment]
 pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
+    stderr().write_line(fmt!("Size of ops: %?",size_of::<Struct_fuse_lowlevel_ops>()));
     unsafe {
         let arg_c_strs_ptrs: ~[*c_schar] = args.map(|s| s.to_c_str().unwrap() );
         let mut fuse_args = Struct_fuse_args {
@@ -335,8 +337,11 @@ fn run_for_reply<T>(req:fuse_req_t, reply_success:ReplySuccessFn<T>,
     unsafe fn call_fuse_req_userdata(req:fuse_req_t) -> *mut c_void {
         fuse_req_userdata(req)
     }
-    unsafe {
-        do task().spawn_with((reply_success, do_op)) |(reply_success, do_op)| {
+    let mut task = task();
+    task.sched_mode(SingleThreaded);
+    task.supervised();
+    do task.spawn_with((reply_success, do_op)) |(reply_success, do_op)| {
+        unsafe {
             do userdata_to_ops(call_fuse_req_userdata(req), reply_success)
                 |ops, reply_success| {
                 send_fuse_reply(do_op(ops), req, reply_success)
@@ -442,7 +447,8 @@ fn reply_readdir(req: fuse_req_t, tuple: (size_t, ReaddirReply)) {
             let max_buf_size = lengths.sum() + 
                 (entries.len() as size_t*EXTRA_CAP_PER_ENTRY);
             let buf_size = cmp::min(max_buf_size, size);
-            let mut buf: ~[u8] = vec::with_capacity(buf_size as uint);
+            let mut buf: ~[c_schar] = vec::with_capacity(buf_size as uint);
+            buf.grow(buf_size as uint, &(0 as c_schar));
             let mut returned_size = 0 as size_t;
             unsafe {
                 for entry in entries.iter() {
@@ -465,7 +471,7 @@ fn reply_readdir(req: fuse_req_t, tuple: (size_t, ReaddirReply)) {
                     }
                 }
                 fuse_reply_buf(req, vec::raw::to_ptr(buf) as *c_schar,
-                               buf.len() as size_t);
+                               returned_size);
             }
         }
     }
