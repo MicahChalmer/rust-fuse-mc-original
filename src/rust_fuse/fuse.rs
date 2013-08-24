@@ -61,7 +61,6 @@ pub struct Struct_fuse_file_info {
     fh: uint64_t,
     lock_owner: uint64_t,
 }
-
 pub struct Struct_fuse_conn_info {
     proto_major: c_uint,
     proto_minor: c_uint,
@@ -99,21 +98,13 @@ pub struct Struct_fuse_bufvec {
     off: size_t,
     buf: [Struct_fuse_buf, ..1u],
 }
-pub struct Struct_fuse_file_info_compat {
-    flags: c_int,
-    fh: c_ulong,
-    writepage: c_int,
-    direct_io: c_uint,
-    keep_cache: c_uint,
-}
 pub type fuse_ino_t = c_ulong;
 pub type Struct_fuse_req = c_void;
 pub type fuse_req_t = *mut Struct_fuse_req;
-
 pub struct Struct_fuse_entry_param {
     ino: fuse_ino_t,
     generation: c_ulong,
-    attr: stat,
+    attr: Struct_stat,
     attr_timeout: c_double,
     entry_timeout: c_double,
 }
@@ -204,79 +195,7 @@ pub struct Struct_fuse_chan_ops {
     send: *u8,
     destroy: *u8,
 }
-pub struct Struct_fuse_lowlevel_ops_compat25 {
-    init: *u8,
-    destroy: *u8,
-    lookup: *u8,
-    forget: *u8,
-    getattr: *u8,
-    setattr: *u8,
-    readlink: *u8,
-    mknod: *u8,
-    mkdir: *u8,
-    unlink: *u8,
-    rmdir: *u8,
-    symlink: *u8,
-    rename: *u8,
-    link: *u8,
-    open: *u8,
-    read: *u8,
-    write: *u8,
-    flush: *u8,
-    release: *u8,
-    fsync: *u8,
-    opendir: *u8,
-    readdir: *u8,
-    releasedir: *u8,
-    fsyncdir: *u8,
-    statfs: *u8,
-    setxattr: *u8,
-    getxattr: *u8,
-    listxattr: *u8,
-    removexattr: *u8,
-    access: *u8,
-    create: *u8,
-}
-pub struct Struct_fuse_lowlevel_ops_compat {
-    init: *u8,
-    destroy: *u8,
-    lookup: *u8,
-    forget: *u8,
-    getattr: *u8,
-    setattr: *u8,
-    readlink: *u8,
-    mknod: *u8,
-    mkdir: *u8,
-    unlink: *u8,
-    rmdir: *u8,
-    symlink: *u8,
-    rename: *u8,
-    link: *u8,
-    open: *u8,
-    read: *u8,
-    write: *u8,
-    flush: *u8,
-    release: *u8,
-    fsync: *u8,
-    opendir: *u8,
-    readdir: *u8,
-    releasedir: *u8,
-    fsyncdir: *u8,
-    statfs: *u8,
-    setxattr: *u8,
-    getxattr: *u8,
-    listxattr: *u8,
-    removexattr: *u8,
-    access: *u8,
-    create: *u8,
-}
-pub struct Struct_fuse_chan_ops_compat24 {
-    receive: *u8,
-    send: *u8,
-    destroy: *u8,
-}
-
-#[link_args ="-lfuse"]
+#[link_args = "-lfuse"]
 extern "C" {
     pub fn fuse_opt_parse(args: *mut Struct_fuse_args, data: *mut c_void,
                           opts: *Struct_fuse_opt, proc: fuse_opt_proc_t) ->
@@ -306,12 +225,6 @@ extern "C" {
                          flags: Enum_fuse_buf_copy_flags) -> ssize_t;
     pub fn fuse_set_signal_handlers(se: *mut Struct_fuse_session) -> c_int;
     pub fn fuse_remove_signal_handlers(se: *mut Struct_fuse_session);
-    pub fn fuse_mount_compat25(mountpoint: *c_schar,
-                               args: *mut Struct_fuse_args) -> c_int;
-    pub fn fuse_mount_compat22(mountpoint: *c_schar, opts: *c_schar) -> c_int;
-    pub fn fuse_mount_compat1(mountpoint: *c_schar, args: *mut *c_schar) ->
-     c_int;
-    pub fn fuse_unmount_compat22(mountpoint: *c_schar);
     pub fn fuse_reply_err(req: fuse_req_t, err: c_int) -> c_int;
     pub fn fuse_reply_none(req: fuse_req_t);
     pub fn fuse_reply_entry(req: fuse_req_t, e: *Struct_fuse_entry_param) ->
@@ -417,25 +330,4 @@ extern "C" {
     pub fn fuse_chan_send(ch: *mut Struct_fuse_chan, iov: *Struct_iovec,
                           count: size_t) -> c_int;
     pub fn fuse_chan_destroy(ch: *mut Struct_fuse_chan);
-    pub fn fuse_lowlevel_new_compat25(args: *mut Struct_fuse_args,
-                                      op: *Struct_fuse_lowlevel_ops_compat25,
-                                      op_size: size_t, userdata: *mut c_void)
-     -> *mut Struct_fuse_session;
-    pub fn fuse_dirent_size(namelen: size_t) -> size_t;
-    pub fn fuse_add_dirent(buf: *mut c_schar, name: *c_schar,
-                           stbuf: *Struct_stat, off: off_t) -> *mut c_schar;
-    pub fn fuse_reply_statfs_compat(req: fuse_req_t, stbuf: *Struct_statfs) ->
-     c_int;
-    pub fn fuse_reply_open_compat(req: fuse_req_t,
-                                  fi: *Struct_fuse_file_info_compat) -> c_int;
-    pub fn fuse_lowlevel_new_compat(opts: *c_schar,
-                                    op: *Struct_fuse_lowlevel_ops_compat,
-                                    op_size: size_t, userdata: *mut c_void) ->
-     *mut Struct_fuse_session;
-    pub fn fuse_chan_new_compat24(op: *mut Struct_fuse_chan_ops_compat24,
-                                  fd: c_int, bufsize: size_t,
-                                  data: *mut c_void) -> *mut Struct_fuse_chan;
-    pub fn fuse_chan_receive(ch: *mut Struct_fuse_chan, buf: *mut c_schar,
-                             size: size_t) -> c_int;
-    pub fn fuse_kern_chan_new(fd: c_int) -> *mut Struct_fuse_chan;
 }
