@@ -306,16 +306,16 @@ pub fn make_fuse_ll_oper(ops:&FuseLowLevelOps)
         create: if ops.create_is_implemented() { Some(create_impl) } else { None },
 
         // Not implemented yet:
-        getlk: ptr::null(),
-        setlk: ptr::null(),
-        bmap: ptr::null(),
-        ioctl: ptr::null(),
-        poll: ptr::null(),
-        write_buf: ptr::null(),
-        retrieve_reply: ptr::null(),
-        forget_multi: ptr::null(),
-        flock: ptr::null(),
-        fallocate: ptr::null(),
+        getlk: None,
+        setlk: None,
+        bmap: None,
+        ioctl: None,
+        poll: None,
+        write_buf: None,
+        retrieve_reply: None,
+        forget_multi: None,
+        flock: None,
+        fallocate: None,
     }
 }
 

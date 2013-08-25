@@ -184,18 +184,42 @@ pub struct Struct_fuse_lowlevel_ops {
     create: Option<extern "C" fn(req: fuse_req_t, parent: fuse_ino_t, 
                                  name: *c_schar,
                                  mode: mode_t, fi: *Struct_fuse_file_info)>,
-
-    // We don't use these yet...
-    getlk: *u8,
-    setlk: *u8,
-    bmap: *u8,
-    ioctl: *u8,
-    poll: *u8,
-    write_buf: *u8,
-    retrieve_reply: *u8,
-    forget_multi: *u8,
-    flock: *u8,
-    fallocate: *u8,
+    getlk: Option<extern "C" fn
+               (arg1: fuse_req_t, arg2: fuse_ino_t,
+                arg3: *mut Struct_fuse_file_info, arg4: *mut Struct_flock)>,
+    setlk: Option<extern "C" fn
+               (arg1: fuse_req_t, arg2: fuse_ino_t,
+                arg3: *mut Struct_fuse_file_info, arg4: *mut Struct_flock,
+                arg5: c_int)>,
+    bmap: Option<extern "C" fn
+              (arg1: fuse_req_t, arg2: fuse_ino_t, arg3: size_t,
+               arg4: uint64_t)>,
+    ioctl: Option<extern "C" fn
+               (arg1: fuse_req_t, arg2: fuse_ino_t, arg3: c_int,
+                arg4: *mut c_void, arg5: *mut Struct_fuse_file_info,
+                arg6: c_uint, arg7: *c_void, arg8: size_t, arg9: size_t)>,
+    poll: Option<extern "C" fn
+              (arg1: fuse_req_t, arg2: fuse_ino_t,
+               arg3: *mut Struct_fuse_file_info,
+               arg4: *mut Struct_fuse_pollhandle)>,
+    write_buf: Option<extern "C" fn
+                   (arg1: fuse_req_t, arg2: fuse_ino_t,
+                    arg3: *mut Struct_fuse_bufvec, arg4: off_t,
+                    arg5: *mut Struct_fuse_file_info)>,
+    retrieve_reply: Option<extern "C" fn
+                        (arg1: fuse_req_t, arg2: *mut c_void,
+                         arg3: fuse_ino_t, arg4: off_t,
+                         arg5: *mut Struct_fuse_bufvec)>,
+    forget_multi: Option<extern "C" fn
+                      (arg1: fuse_req_t, arg2: size_t,
+                       arg3: *mut Struct_fuse_forget_data)>,
+    flock: Option<extern "C" fn
+               (arg1: fuse_req_t, arg2: fuse_ino_t,
+                arg3: *mut Struct_fuse_file_info, arg4: c_int)>,
+    fallocate: Option<extern "C" fn
+                   (arg1: fuse_req_t, arg2: fuse_ino_t, arg3: c_int,
+                    arg4: off_t, arg5: off_t,
+                    arg6: *mut Struct_fuse_file_info)>,
 }
 pub type fuse_interrupt_func_t = *u8;
 pub struct Struct_fuse_session_ops {
