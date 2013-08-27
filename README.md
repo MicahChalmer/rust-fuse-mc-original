@@ -2,27 +2,66 @@
 
 This is an interface to write a [FUSE](http://fuse.sourceforge.net/) filesystem in [rust](http://www.rust-lang.org/).
 
-# WORK IN PROGRESS
+# WARNING - WORK IN PROGRESS/QUESTIONABLE PROJECT LIFE
 
-At this point all you can do with this is compile and run a rust version of the "hello world" filesystem that comes with FUSE as a tutorial.  At least, you can do that on MY machine.  I don't know if it works anywhere else.
+Like Rust itself, this is a work in progress.  As of now it has bindings for the FUSE low-level API, and you can run a "hello FS" based directly on the `example/hello_ll.c` that exists in the FUSE source.  At least, you can on MY machine.  I don't know if it works anywhere else.
 
-Only the few functions needed for hello_fs are even implemented at this point.
+This is a curiosity project for me.  No actual need to use it is driving me to develop it.  My only motivation was curiosity about both Rust and FUSE--by developing an interface between them I figured I could learn about both.  As such, I may or may not stay interested enough to keep updating it until Rust has a stable release.  Consider yourself warned.
 
-As per some helpful discussion on the Rust mailing list, the high level FUSE API is pretty much incompatible with rust as it currently stands.  Rust's std I/O does not work when called from a thread that wasn't started as a rust task.  So it'll have to be the low-level API from the get-go.  New plan:
+# GUIDE
 
-  1. Switch to low-level API and write another "hello world" based on hello_ll.c from FUSE
-  2. Try to cover the rest of the API.  Make a very thin wrapper, just enough to be useful without unsafe blocks.  Create a test FS that just puts files into its own in-memory data structures using that, and get it to pass some filesystem tests.
-  3. Change/wrap the thin wrapper with something that is more rust-y.  Try to get rust's type system to enforce the constraints that in the FUSE documentation are just comments.
+The modules:
 
+  * `fuse` - This is the overall package--nothing exists here directly at this point, other than the submodules
+  * `fuse::fuse_c` - The actual C headers, translated to rust extern fns.  Not meant for direct use.
+  * `fuse::lowlevel` - This is a "thin" rust wrapper over the FUSE low level C API.  The goals:
+    * Eliminate the need for a user of this library to use unsafe code.  That means converting all raw pointers to vectors, borrowed pointers, etc as appropriate.
+    * Use rust's task system to:
+      * Run each filesystem request in its own task to allow them to run in parallel.
+      * Guarantee that each "request" call receives an appropriate reply, without having to track it yourself.
 
-This is a curiosity project for me.  No actual need to use it is motivating me to develop it.  My only motivation was curiosity about both Rust and FUSE--by developing an interface between them I figured I could learn about both.  Consider yourself warned.
+# PROBLEMS
 
-Calling through C function pointers still doesn't work (see https://github.com/mozilla/rust/issues/6194 and https://github.com/mozilla/rust/issues/3678).  This makes it necessary to use my own C shim to be able to call a function pointer that fuse passes us.  I'm not particularly concerned with this, because it is a temporary stopgap--once Rust fixes up its FFI to be able to call C functions through C function pointers it will no longer be necessary.
+There are some problems with it as it exists now:
+
+  * That horrible `xxx_is_implemented()` business.  See the comment in lowlevel.rs about it.
+  * Having functions return `ErrnoResult<()>` (effectively `Result<(),c_int>`) seems iffy as well.  It's there for consistency with the other functions which return an error with Err or a reply with data in Ok.
+  * If the filesystem ops tasks fail, no reply is generated.  It should be able to come back with an error.
+
+# MISSING PIECES
+
+If I were going to publish this for actual use, it would need:
+
+  1. Documentation
+  2. A test suite
+  3. A higher-level abstraction over the lowlevel API, similar to FUSE's high-level API but taking full advantage of Rust's features.
+    * Unfortunately, FUSE's high-level C API is no help with this.  Rust's task system doesn't play nicely with having a C API spawn its own threads and then try to call back into rust code from them, which is what the FUSE high-level API tries to do.  You can tell it to run single threaded, but that forces all filesystem operations to run serially, since the high-level FUSE API makes a synchronous call to your callback and replies when you return.
+
+The first two are more important.  But the third is more fun.  Guess which one I'm going to do next...;-)
 
 # BUILDING
 
-To build the C shim, run `make` inside the `wrapper` directory.  I did not bother trying to make rustpkg do this, so you have to do it yourself before building the rust code.
-
 Build the rust code with [rustpkg](https://github.com/mozilla/rust/blob/master/doc/rustpkg.md).  `rust_fuse` is the interface library and `hello_fs` is the aforementioned "hello world" filesystem that uses it.
+
+To build and run the "hello FS" example and see the result:
+  1. Install FUSE and rust on your system.  Other sources can say how to do this better than I can.
+  2. `rustpkg install hello_fs` to build the hello_fs binary in this source tree
+  3. Run `./bin/hello_fs` and pass the directory you want to mount.  For example:
+
+````
+$ mkdir /tmp/hello_fs
+$ ./bin/hello_fs /tmp/hello_fs &
+[1] 5835
+fuse: warning: library too old, some operations may not work
+$ ls -laF /tmp/hello_fs
+total 4
+drwxr-xr-x 2 root root    0 Dec 31  1969 ./
+drwxrwxrwt 8 root root 4096 Aug 27 01:07 ../
+-r--r--r-- 1 root root   19 Dec 31  1969 hello_from_rust
+$ cat /tmp/hello_fs/hello_from_rust 
+Hello rusty world!
+$ fusermount -u /tmp/hello_fs 
+[1]+  Done                    ./bin/hello_fs /tmp/hello_fs
+````
 
 I'm using the nightly builds of Rust as pulled from the [Ubuntu PPA](https://launchpad.net/%7Ehansjorg/+archive/rust), which tracks the `master` branch of rust.
