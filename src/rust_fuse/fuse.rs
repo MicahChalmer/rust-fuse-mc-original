@@ -118,6 +118,7 @@ pub struct Struct_fuse_forget_data {
     ino: uint64_t,
     nlookup: uint64_t,
 }
+#[packed]
 pub struct Struct_fuse_lowlevel_ops {
     init: Option<extern "C" fn(userdata:*mut c_void, 
                                _conn:*Struct_fuse_conn_info)>,

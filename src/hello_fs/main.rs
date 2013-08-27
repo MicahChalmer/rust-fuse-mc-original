@@ -53,7 +53,7 @@ struct HelloFs;
 impl FuseLowLevelOps for HelloFs {
     fn getattr(&self, ino: fuse_ino_t) -> ErrnoResult<AttrReply> {
         match hello_stat(ino) {
-            Some(st) => Ok(AttrReply{ attr: st, attr_timeout: 0.0 }),
+            Some(st) => Ok(AttrReply{ attr: st, attr_timeout: 1.0 }),
             None => Err(ENOENT)
         }
     }
@@ -67,8 +67,8 @@ impl FuseLowLevelOps for HelloFs {
                 ino: INO_HELLO_FILE,
                 generation: 0,
                 attr: hello_file_stat(),
-                attr_timeout: 0.0,
-                entry_timeout: 0.0
+                attr_timeout: 1.0,
+                entry_timeout: 1.0
             })
         }
     }
@@ -79,13 +79,13 @@ impl FuseLowLevelOps for HelloFs {
         if ino != INO_ROOT_DIR { return Err(ENOENT) }
         let entries = [
                        DirEntry{ino: INO_ROOT_DIR, name: ~".", 
-                    attr: root_dir_stat(), next_offset: 1},
+                    mode: root_dir_stat().st_mode, next_offset: 1},
                        DirEntry{ino: INO_ROOT_DIR, name: ~"..", 
-                    attr: root_dir_stat(), next_offset: 2}, 
+                    mode: root_dir_stat().st_mode, next_offset: 2}, 
                        DirEntry{ 
                     ino: INO_HELLO_FILE, 
                     name: HELLO_FILE_NAME.into_owned(), 
-                    attr: hello_file_stat(), 
+                    mode: hello_file_stat().st_mode, 
                     next_offset: 3},
                        ];
         let slice = entries.slice_from(min(entries.len(), off as uint));

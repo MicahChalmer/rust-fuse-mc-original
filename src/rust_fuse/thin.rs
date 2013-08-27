@@ -21,11 +21,13 @@ use std::ptr;
 use std::vec;
 use std::task::{task, SingleThreaded};
 use std::c_str::CString;
+use std::str;
 use std::num::zero;
 use std::bool::to_bit;
 use std::cmp;
 use std::iterator::AdditiveIterator;
 use fuse::*;
+use std::path::stat::arch::default_stat;
 pub use fuse::{fuse_ino_t,Struct_fuse_entry_param};
 
 /// Information to be returned from open
@@ -66,22 +68,12 @@ pub enum ReadReply {
     EOF
 }
 
+#[deriving(Clone)]
 pub struct DirEntry {
     ino: fuse_ino_t,
     name: ~str,
-    attr: stat,
+    mode: mode_t,
     next_offset: off_t
-}
-
-impl Clone for DirEntry {
-    fn clone(&self) -> DirEntry {
-        DirEntry {
-            ino: self.ino,
-            name: self.name.clone(),
-            attr: self.attr,
-            next_offset: self.next_offset
-        }
-    }
 }
 
 pub enum ReaddirReply {
@@ -219,7 +211,6 @@ fn userdata_to_ops<T, U>(userdata:*mut c_void, arg:U,
 
 #[fixed_stack_segment]
 pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
-    stderr().write_line(fmt!("Size of ops: %?",size_of::<Struct_fuse_lowlevel_ops>()));
     unsafe {
         let arg_c_strs_ptrs: ~[*c_schar] = args.map(|s| s.to_c_str().unwrap() );
         let mut fuse_args = Struct_fuse_args {
@@ -350,9 +341,9 @@ fn run_for_reply<T>(req:fuse_req_t, reply_success:ReplySuccessFn<T>,
 }
 
 #[inline]
-unsafe fn cptr_to_str(cptr:*c_schar) -> ~str {
+unsafe fn cptr_to_str<T>(cptr:*c_schar, func:&fn(&str) -> T) -> T {
     let cstr = CString::new(cptr,false);
-    cstr.as_bytes().to_str()
+    func(str::from_bytes_slice(cstr.as_bytes()).trim_right_chars(&(0 as char)))
 }
 
 #[fixed_stack_segment]
@@ -453,15 +444,19 @@ fn reply_readdir(req: fuse_req_t, tuple: (size_t, ReaddirReply)) {
                 for entry in entries.iter() {
                     let buf_ptr = ptr::mut_offset(vec::raw::to_mut_ptr(buf),
                                                   returned_size as int);
-                    let remaining_size:size_t = buf_size - returned_size;
-                    let added_size =
-                        do entry.name.to_c_str().with_ref |name_cstr| { 
-                            fuse_add_direntry(req, 
-                                              buf_ptr as *mut c_schar,
-                                              remaining_size,
-                                              name_cstr,
-                                              ptr::to_unsafe_ptr(&entry.attr),
-                                              entry.next_offset)
+                    let remaining_size = buf_size - returned_size;
+                    let added_size = do entry.name.to_c_str().with_ref |name_cstr| {
+                        let stbuf = stat{
+                            st_mode: entry.mode,
+                            st_ino: entry.ino,
+                            ..default_stat()
+                        };
+                        fuse_add_direntry(req,
+                                          buf_ptr,
+                                          remaining_size,
+                                          name_cstr,
+                                          ptr::to_unsafe_ptr(&stbuf),
+                                          entry.next_offset)
                     };
                     if added_size <= remaining_size {
                         returned_size += added_size;
@@ -508,7 +503,7 @@ extern fn destroy_impl(userdata:*mut c_void) {
 extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
     do run_for_reply(req, reply_entryparam) |ops| {
         unsafe {
-            ops.lookup(parent, cptr_to_str(name))
+            do cptr_to_str(name) |name| { ops.lookup(parent, name)}
         }
     }
 }
@@ -563,7 +558,7 @@ extern fn mknod_impl(req:fuse_req_t, parent: fuse_ino_t, name:*c_schar,
                      mode: mode_t, rdev: dev_t) {
     do run_for_reply(req, reply_entryparam) |ops| {
         unsafe {
-            ops.mknod(parent, cptr_to_str(name), mode, rdev)
+            do cptr_to_str(name) |name| { ops.mknod(parent, name, mode, rdev) }
         }
     }
 }
@@ -572,7 +567,7 @@ extern fn mkdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar,
                      mode:mode_t) {
     do run_for_reply(req, reply_entryparam) |ops| {
         unsafe {
-            ops.mkdir(parent, cptr_to_str(name), mode)
+            do cptr_to_str(name) |name| { ops.mkdir(parent, name, mode) }
         }
     }
 }
@@ -580,7 +575,7 @@ extern fn mkdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar,
 extern fn unlink_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
     do run_for_reply(req, reply_zero_err) |ops| {
         unsafe {
-            ops.unlink(parent, cptr_to_str(name))
+            do cptr_to_str(name) |name| { ops.unlink(parent, name) }
         }
     }
 }
@@ -588,7 +583,7 @@ extern fn unlink_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
 extern fn rmdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
     do run_for_reply(req, reply_zero_err) |ops| {
         unsafe {
-            ops.rmdir(parent, cptr_to_str(name))
+            do cptr_to_str(name) |name| { ops.rmdir(parent, name) }
         }
     }
 }
@@ -597,7 +592,11 @@ extern fn symlink_impl(req: fuse_req_t, link: *c_schar, parent: fuse_ino_t,
                        name: *c_schar) {
     do run_for_reply(req, reply_entryparam) |ops| {
         unsafe {
-            ops.symlink(cptr_to_str(link), parent, cptr_to_str(name))
+            do cptr_to_str(link) |link| {
+                do cptr_to_str(name) |name| {
+                    ops.symlink(link, parent, name)
+                }
+            }
         }
     }
 }
@@ -606,8 +605,11 @@ extern fn rename_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar, newpa
                        newname: *c_schar) {
     do run_for_reply(req, reply_zero_err) |ops| {
         unsafe {
-            ops.rename(parent, cptr_to_str(name), newparent,
-                       cptr_to_str(newname))
+            do cptr_to_str(name) |name| {
+                do cptr_to_str(newname) |newname| {
+                    ops.rename(parent, name, newparent,newname)
+                }
+            }
         }
     }
 }
@@ -616,7 +618,9 @@ extern fn link_impl(req: fuse_req_t, ino: fuse_ino_t, newparent: fuse_ino_t,
                     newname: *c_schar) {
     do run_for_reply(req, reply_entryparam) |ops| {
         unsafe {
-            ops.link(ino, newparent, cptr_to_str(newname))
+            do cptr_to_str(newname) |newname| {
+                ops.link(ino, newparent, newname)
+            }
         }
     }
 }
@@ -722,7 +726,9 @@ extern fn setxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
     do run_for_reply(req, reply_zero_err) |ops| {
         unsafe {
             do vec::raw::buf_as_slice(value, size as uint) |vec| {
-                ops.setxattr(ino, cptr_to_str(name), vec, flags)
+                do cptr_to_str(name) |name| {
+                    ops.setxattr(ino, name, vec, flags)
+                }
             }
         }
     }
@@ -733,13 +739,13 @@ extern fn getxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
     if size == 0 {
         do run_for_reply(req, reply_xattr) |ops| {
             unsafe {
-                ops.getxattr_size(ino, cptr_to_str(name))
+                do cptr_to_str(name) |name| { ops.getxattr_size(ino, name) }
             }
         }
     } else {
         do run_for_reply(req, reply_read) |ops| {
             unsafe {
-                ops.getxattr(ino, cptr_to_str(name), size)
+                do cptr_to_str(name) |name| { ops.getxattr(ino, name, size) }
             }
         }
     }
@@ -760,7 +766,7 @@ extern fn listxattr_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t) {
 extern fn removexattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar) {
     do run_for_reply(req, reply_zero_err) |ops| {
         unsafe {
-            ops.removexattr(ino, cptr_to_str(name))
+            do cptr_to_str(name) |name| { ops.removexattr(ino, name) }
         }
     }
 }
@@ -775,7 +781,9 @@ extern fn create_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar,
                       mode: mode_t, fi: *Struct_fuse_file_info) {
     do run_for_reply(req, reply_create) |ops| {
         unsafe {
-            ops.create(parent, cptr_to_str(name), mode, (*fi).flags)
+            do cptr_to_str(name) |name| {
+                ops.create(parent, name, mode, (*fi).flags)
+            }
         }
     }
 }
