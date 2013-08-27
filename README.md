@@ -27,6 +27,7 @@ There are some problems with it as it exists now:
   * That horrible `xxx_is_implemented()` business.  See the comment in lowlevel.rs about it.
   * Having functions return `ErrnoResult<()>` (effectively `Result<(),c_int>`) seems iffy as well.  It's there for consistency with the other functions which return an error with Err or a reply with data in Ok.
   * If the filesystem ops tasks fail, no reply is generated.  It should be able to come back with an error.
+  * Something is screwy in `fuse_main` with how it handles signals.  Unlike the fuse hello_ll example, here if you SIGINT the process it doesn't unmount and die right away.  It waits until something tries to access the filesystem again, then produces an error (`Software caused connection abort`) and then dies.
 
 # MISSING PIECES
 
