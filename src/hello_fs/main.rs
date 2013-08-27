@@ -14,7 +14,7 @@ use std::libc::{
 };
 
 use std::cmp::min;
-use rust_fuse::thin::*;
+use rust_fuse::lowlevel::*;
 use std::os;
 use std::path::stat::arch::default_stat;
 

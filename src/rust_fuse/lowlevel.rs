@@ -26,9 +26,9 @@ use std::num::zero;
 use std::bool::to_bit;
 use std::cmp;
 use std::iterator::AdditiveIterator;
-use fuse::*;
+use fuse_c::*;
 use std::path::stat::arch::default_stat;
-pub use fuse::{fuse_ino_t,Struct_fuse_entry_param};
+pub use fuse_c::{fuse_ino_t,Struct_fuse_entry_param};
 
 /// Information to be returned from open
 #[deriving(Zero)]
