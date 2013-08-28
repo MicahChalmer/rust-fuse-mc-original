@@ -2,9 +2,13 @@
 
 This is an interface to write a [FUSE](http://fuse.sourceforge.net/) filesystem in [rust](http://www.rust-lang.org/).
 
-# WARNING - WORK IN PROGRESS/QUESTIONABLE PROJECT LIFE
+# WARNINGS
+
+## WORK IN PROGRESS
 
 Like Rust itself, this is a work in progress.  As of now it has bindings for the FUSE low-level API, and you can run a "hello FS" based directly on the `example/hello_ll.c` that exists in the FUSE source.  At least, you can on MY machine.  I don't know if it works anywhere else.
+
+## QUESTIONABLE PROJECT LIFE
 
 This is a curiosity project for me.  No actual need to use it is driving me to develop it.  My only motivation was curiosity about both Rust and FUSE--by developing an interface between them I figured I could learn about both.  As such, I may or may not stay interested enough to keep updating it until Rust has a stable release.  Consider yourself warned.
 
@@ -24,10 +28,11 @@ The modules:
 
 There are some problems with it as it exists now:
 
-  * That horrible `xxx_is_implemented()` business.  See the comment in lowlevel.rs about it.
+  * That unfortunate struct of `Option<fn...>`s.  It really should be a trait...but I can't see how, at least not without resorting to even worse hacks than what I ended up with.
   * Having functions return `ErrnoResult<()>` (effectively `Result<(),c_int>`) seems iffy as well.  It's there for consistency with the other functions which return an error with Err or a reply with data in Ok.
   * If the filesystem ops tasks fail, no reply is generated.  It should be able to come back with an error.
   * Something is screwy in `fuse_main` with how it handles signals.  Unlike the fuse hello_ll example, here if you SIGINT the process it doesn't unmount and die right away.  It waits until something tries to access the filesystem again, then produces an error (`Software caused connection abort`) and then dies.
+  * As of now it spawns a thread for every new task it creates.  It shouldn't do that...it should spawn one for the blocking C calls, then let the default scheduler do the rest
 
 # MISSING PIECES
 
@@ -38,7 +43,7 @@ If I were going to publish this for actual use, it would need:
   3. A higher-level abstraction over the lowlevel API, similar to FUSE's high-level API but taking full advantage of Rust's features.
     * Unfortunately, FUSE's high-level C API is no help with this.  Rust's task system doesn't play nicely with having a C API spawn its own threads and then try to call back into rust code from them, which is what the FUSE high-level API tries to do.  You can tell it to run single threaded, but that forces all filesystem operations to run serially, since the high-level FUSE API makes a synchronous call to your callback and replies when you return.
 
-The first two are more important.  But the third is more fun.  Guess which one I'm going to do next...;-)
+The first two are more important for real world use.  The third is more fun.  Guess which one I'm going to do next...;-)
 
 # BUILDING
 
