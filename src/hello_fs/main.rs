@@ -17,6 +17,7 @@ use std::cmp::min;
 use fuse::lowlevel::*;
 use std::os;
 use std::path::stat::arch::default_stat;
+use std::num::zero;
 
 static HELLO_STR:&'static str = "Hello rusty world!\n";
 static HELLO_FILE_NAME:&'static str = "hello_from_rust";
@@ -50,73 +51,73 @@ fn hello_stat(ino: fuse_ino_t) -> Option<stat> {
 
 struct HelloFs;
 
-impl FuseLowLevelOps for HelloFs {
-    fn getattr(&self, ino: fuse_ino_t) -> ErrnoResult<AttrReply> {
-        match hello_stat(ino) {
-            Some(st) => Ok(AttrReply{ attr: st, attr_timeout: 1.0 }),
-            None => Err(ENOENT)
-        }
-    }
-    fn getattr_is_implemented(&self) -> bool { true }
 
-    fn lookup(&self, parent: fuse_ino_t, name:&str) 
-        -> ErrnoResult<EntryReply> {
-        if parent != INO_ROOT_DIR || name != HELLO_FILE_NAME {
-            Err(ENOENT) 
-        } else { Ok(Struct_fuse_entry_param {
-                ino: INO_HELLO_FILE,
-                generation: 0,
-                attr: hello_file_stat(),
-                attr_timeout: 1.0,
-                entry_timeout: 1.0
-            })
-        }
-    }
-    fn lookup_is_implemented(&self) -> bool { true }
-
-    fn readdir(&self, ino:fuse_ino_t, _size: size_t, off: off_t, _fh: u64) 
-        -> ErrnoResult<ReaddirReply> {
-        if ino != INO_ROOT_DIR { return Err(ENOENT) }
-        let entries = [
-                       DirEntry{ino: INO_ROOT_DIR, name: ~".", 
-                    mode: root_dir_stat().st_mode, next_offset: 1},
-                       DirEntry{ino: INO_ROOT_DIR, name: ~"..", 
-                    mode: root_dir_stat().st_mode, next_offset: 2}, 
-                       DirEntry{ 
-                    ino: INO_HELLO_FILE, 
-                    name: HELLO_FILE_NAME.into_owned(), 
-                    mode: hello_file_stat().st_mode, 
-                    next_offset: 3},
-                       ];
-        let slice = entries.slice_from(min(entries.len(), off as uint));
-        Ok(DirEntries(slice.into_owned()))
-    }
-    fn readdir_is_implemented(&self) -> bool { true }
-
-    fn open(&self, ino: fuse_ino_t, flags: c_int) -> ErrnoResult<OpenReply> {
-        if ino != INO_HELLO_FILE {
-            Err(ENOENT)
-        } else if flags & 3 != O_RDONLY {
-            Err(EACCES)
-        } else {
-            Ok(OpenReply{direct_io: false, keep_cache: false, fh: 0})
-        }
-    }
-    fn open_is_implemented(&self) -> bool { true }
-        
-    fn read(&self, ino: fuse_ino_t, size: size_t, off: off_t, _fh: u64)
-    -> ErrnoResult<ReadReply> {
-        if ino != INO_HELLO_FILE {
-            return Err(ENOENT)
-        };
-
-        let slice_to_read = HELLO_STR.slice(off as uint, 
-                                            min(HELLO_STR.len(),size as uint));
-        Ok(DataBuffer(slice_to_read.as_bytes().into_owned()))
-    }
-    fn read_is_implemented(&self) -> bool { true }
-}
 
 fn main() {
-    fuse_main(os::args(), ~HelloFs as ~FuseLowLevelOps);
+    fuse_main(os::args(), ~FuseLowLevelOps{
+
+            getattr: Some(|ino: fuse_ino_t|  {
+                    match hello_stat(ino) {
+                        Some(st) => Ok(AttrReply{ attr: st, attr_timeout: 1.0 }),
+                        None => Err(ENOENT)
+                    }
+                }),
+
+            lookup: Some(|parent: fuse_ino_t, name:&str| 
+                         {
+                    if parent != INO_ROOT_DIR || name != HELLO_FILE_NAME {
+                        Err(ENOENT) 
+                    } else { Ok(Struct_fuse_entry_param {
+                                ino: INO_HELLO_FILE,
+                                generation: 0,
+                                attr: hello_file_stat(),
+                                attr_timeout: 1.0,
+                                entry_timeout: 1.0
+                            })
+                    }
+                }),
+
+            readdir: Some(|ino:fuse_ino_t, _size: size_t, off: off_t, _fh: u64| 
+                          {
+                    if ino != INO_ROOT_DIR {
+                        Err(ENOENT)
+                    } else {
+                        let entries = [
+                                       DirEntry{ino: INO_ROOT_DIR, name: ~".", 
+                                    mode: root_dir_stat().st_mode, next_offset: 1},
+                                       DirEntry{ino: INO_ROOT_DIR, name: ~"..", 
+                                    mode: root_dir_stat().st_mode, next_offset: 2}, 
+                                       DirEntry{ 
+                                    ino: INO_HELLO_FILE, 
+                                    name: HELLO_FILE_NAME.into_owned(), 
+                                    mode: hello_file_stat().st_mode, 
+                                    next_offset: 3},
+                                       ];
+                        let slice = entries.slice_from(min(entries.len(), off as uint));
+                        Ok(DirEntries(slice.into_owned()))
+                    }
+                }),
+
+            open: Some(|ino: fuse_ino_t, flags: c_int|  {
+                    if ino != INO_HELLO_FILE {
+                        Err(ENOENT)
+                    } else if flags & 3 != O_RDONLY {
+                        Err(EACCES)
+                    } else {
+                        Ok(OpenReply{direct_io: false, keep_cache: false, fh: 0})
+                    }
+                }),
+
+            read: Some(|ino: fuse_ino_t, size: size_t, off: off_t, _fh: u64|
+                       {
+                    if ino != INO_HELLO_FILE {
+                        Err(ENOENT)
+                    } else {
+                        let slice_to_read = HELLO_STR.slice(off as uint, 
+                                                            min(HELLO_STR.len(),size as uint));
+                        Ok(DataBuffer(slice_to_read.as_bytes().into_owned()))
+                    }
+                }),
+            ..zero()
+        });
 }
