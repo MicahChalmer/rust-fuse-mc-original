@@ -167,13 +167,13 @@ pub struct FuseLowLevelOps<'self> {
 }
 
 /*
-* Run a function with a borrowed pointer to the FuseLowLevelOps struct pointed
-* to by the given userdata pointer.  The "arg" parameter is for passing extra
-* data into the function a la task::spawn_with (needed to push owned pointers
-* into the closure)
-*/
+ * Run a function with a borrowed pointer to the FuseLowLevelOps struct pointed
+ * to by the given userdata pointer.  The "arg" parameter is for passing extra
+ * data into the function a la task::spawn_with (needed to push owned pointers
+ * into the closure)
+ */
 fn userdata_to_ops<T, U>(userdata:*mut c_void, arg:U,
-                      func:&fn(&FuseLowLevelOps, U) -> T) -> T {
+                         func:&fn(&FuseLowLevelOps, U) -> T) -> T {
     unsafe {
         func(*(userdata as *~FuseLowLevelOps), arg)
     }
@@ -232,7 +232,7 @@ pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
 }
 
 pub fn make_fuse_ll_oper(ops:&FuseLowLevelOps)
-    -> Struct_fuse_lowlevel_ops {
+                         -> Struct_fuse_lowlevel_ops {
     return Struct_fuse_lowlevel_ops {
         init: ops.init.map(|_| init_impl),
         destroy: ops.destroy.map(|_| destroy_impl),
@@ -284,7 +284,7 @@ type ReplySuccessFn<T> = ~fn(req:fuse_req_t, reply:T);
 
 #[fixed_stack_segment]
 fn send_fuse_reply<T>(result:ErrnoResult<T>, req:fuse_req_t, 
-                    reply_success:ReplySuccessFn<T>) {
+                      reply_success:ReplySuccessFn<T>) {
     match result {
         Ok(reply) => reply_success(req, reply),
         Err(errno) => unsafe { fuse_reply_err(req, errno); },
@@ -406,7 +406,7 @@ fn reply_readdir(req: fuse_req_t, tuple: (size_t, ReaddirReply)) {
             // what's needed
             static EXTRA_CAP_PER_ENTRY:size_t = 32;
             let mut lengths = entries.iter().map(|x| x.name.len() as size_t);
-            let max_buf_size = lengths.sum() + 
+            let max_buf_size = lengths.sum() +
                 (entries.len() as size_t*EXTRA_CAP_PER_ENTRY);
             let buf_size = cmp::min(max_buf_size, size);
             let mut buf: ~[c_schar] = vec::with_capacity(buf_size as uint);
@@ -465,7 +465,7 @@ fn reply_xattr(req: fuse_req_t, size: size_t) {
 }
 
 fn handle_unimpl<F, T>(opt:&Option<F>, imp:&fn(&F) -> ErrnoResult<T>)
-    -> ErrnoResult<T> {
+                       -> ErrnoResult<T> {
     match *opt {
         Some(ref f) => imp(f),
         None => {
@@ -507,15 +507,7 @@ extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
         |name| <- cptr_to_str(name);
         => {
             (*f)(parent, name)
-        }
-    )
-    // do run_for_reply(req, reply_entryparam) |ops| {
-    //     do handle_unimpl(&ops.lookup) |f| {
-    //         do cptr_to_str(name) |name| {
-    //             (*f)(parent, name)
-    //         }
-    //     }
-    // }
+        });
 }
 
 extern fn forget_impl(req: fuse_req_t, ino: fuse_ino_t, nlookup:c_ulong) {
@@ -817,7 +809,8 @@ extern fn removexattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar) {
     }
 }
 
-extern fn access_impl(req: fuse_req_t, ino: fuse_ino_t, mask: c_int) {
+extern fn access_impl(req: fuse_req_t, 
+                      ino: fuse_ino_t, mask: c_int) {
     do run_for_reply(req, reply_zero_err) |ops| {
         do handle_unimpl(&ops.access) |f| {
             (*f)(ino, mask)
