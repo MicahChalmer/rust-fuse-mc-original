@@ -314,7 +314,7 @@ fn run_for_reply<T>(req:fuse_req_t, reply_success:ReplySuccessFn<T>,
 fn cptr_to_str<T>(cptr:*c_schar, func:&fn(&str) -> T) -> T {
     unsafe {
         let cstr = CString::new(cptr,false);
-        func(str::from_bytes_slice(cstr.as_bytes()).trim_right_chars(&(0 as char)))
+        func(str::from_utf8_slice(cstr.as_bytes()).trim_right_chars(&(0u8 as char)))
     }
 }
 
