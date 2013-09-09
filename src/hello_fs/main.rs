@@ -1,4 +1,4 @@
-extern mod fuse;
+extern mod rust_fuse;
 
 use std::libc::{
     S_IFDIR,
@@ -14,7 +14,7 @@ use std::libc::{
 };
 
 use std::cmp::min;
-use fuse::lowlevel::*;
+use rust_fuse::lowlevel::*;
 use std::os;
 use std::path::stat::arch::default_stat;
 use std::num::zero;

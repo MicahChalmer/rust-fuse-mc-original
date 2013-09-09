@@ -16,9 +16,9 @@ This is a curiosity project for me.  No actual need to use it is driving me to d
 
 The modules:
 
-  * `fuse` - This is the overall package--nothing exists here directly at this point, other than the submodules
-  * `fuse::fuse_c` - The actual C headers, translated to rust extern fns.  Not meant for direct use.
-  * `fuse::lowlevel` - This is a "thin" rust wrapper over the FUSE low level C API.  The goals:
+  * `rust_fuse` - This is the overall package--nothing exists here directly at this point, other than the submodules
+  * `rust_fuse::ffi` - The actual C headers, translated to rust extern fns.  Not meant for direct use.
+  * `rust_fuse::lowlevel` - This is a "thin" rust wrapper over the FUSE low level C API.  The goals:
     * Eliminate the need for a user of this library to use unsafe code.  That means converting all raw pointers to vectors, borrowed pointers, etc as appropriate.
     * Use rust's task system to:
       * Run each filesystem request in its own task to allow them to run in parallel.

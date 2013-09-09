@@ -26,10 +26,10 @@ use std::num::zero;
 use std::bool::to_bit;
 use std::cmp;
 use std::iterator::AdditiveIterator;
-use fuse_c::*;
+use ffi::*;
 use std::path::stat::arch::default_stat;
 use std::libc::ENOSYS;
-pub use fuse_c::{fuse_ino_t,Struct_fuse_entry_param};
+pub use ffi::{fuse_ino_t,Struct_fuse_entry_param};
 
 /// Information to be returned from open
 #[deriving(Zero)]
