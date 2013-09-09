@@ -217,10 +217,6 @@ pub struct Struct_fuse_lowlevel_ops {
     flock: Option<extern "C" fn
                (arg1: fuse_req_t, arg2: fuse_ino_t,
                 arg3: *mut Struct_fuse_file_info, arg4: c_int)>,
-    fallocate: Option<extern "C" fn
-                   (arg1: fuse_req_t, arg2: fuse_ino_t, arg3: c_int,
-                    arg4: off_t, arg5: off_t,
-                    arg6: *mut Struct_fuse_file_info)>,
 }
 pub type fuse_interrupt_func_t = *u8;
 pub struct Struct_fuse_session_ops {

@@ -188,7 +188,6 @@ pub struct FuseLowLevelOps<'self> {
     // retrieve_reply
     // forget_multi
     // flock
-    // fallocate
 }
 
 /*
@@ -304,7 +303,6 @@ pub fn make_fuse_ll_oper(ops:&FuseLowLevelOps)
         retrieve_reply: None,
         forget_multi: None,
         flock: None,
-        fallocate: None,
     }
 }
 
