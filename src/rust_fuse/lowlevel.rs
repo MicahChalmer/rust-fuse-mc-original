@@ -523,21 +523,14 @@ extern fn destroy_impl(userdata:*mut c_void) {
     }
 }
 
-macro_rules! multi_do {
-    (|$args:pat| <- $e:expr; $(|$args_rest:pat| <- $e_rest:expr;)+
-     => $blk:block) =>
-        (do $e |$args| { multi_do!($(|$args_rest| <- $e_rest;)+ => $blk) });
-    {|$args:pat| <- $e:expr; => $blk:block} => (do $e |$args| $blk);
-}
-
 extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
-    multi_do!(
-        |ops| <- run_for_reply(req, reply_entryparam);
-        |f| <- handle_unimpl(&ops.lookup);
-        |name| <- cptr_to_str(name);
-        => {
-            (*f)(parent, name)
-        });
+    do run_for_reply(req, reply_entryparam) |ops| {
+        do handle_unimpl(&ops.lookup) |f| {
+            do cptr_to_str(name) |name| {
+                (*f)(parent, name)
+            }
+        }
+    }
 }
 
 extern fn forget_impl(req: fuse_req_t, ino: fuse_ino_t, nlookup:c_ulong) {
