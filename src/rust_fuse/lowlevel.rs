@@ -134,14 +134,14 @@ pub struct FuseLowLevelOps<'self> {
                              -> ErrnoResult<()>>,
     link: Option<&'self fn(_ino: fuse_ino_t, _newparent: fuse_ino_t,
                            _newname: &str) -> ErrnoResult<EntryReply>>,
-    open: Option<&'self fn(_ino: fuse_ino_t, _flags: c_int) 
+    open: Option<&'self fn(_ino: fuse_ino_t, _flags: c_int)
                            -> ErrnoResult<OpenReply>>,
     read: Option<&'self fn(_ino: fuse_ino_t, _size: size_t, _off: off_t,
                            _fh: u64) -> ErrnoResult<ReadReply>>,
     // TODO: is writepage a bool, or an actual number that needs to be;
     // preserved?;
     write: Option<&'self fn(_ino: fuse_ino_t, _buf:&[u8], _off: off_t,
-                            _fh: u64, _writepage: bool) 
+                            _fh: u64, _writepage: bool)
                             -> ErrnoResult<size_t>>,
     flush: Option<&'self fn(_ino: fuse_ino_t, _lock_owner: u64, _fh: u64)
                             -> ErrnoResult<()>>,
@@ -206,7 +206,7 @@ fn userdata_to_ops<T, U>(userdata:*mut c_void, arg:U,
 #[fixed_stack_segment]
 pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
     unsafe {
-        let arg_c_strs_ptrs: ~[*c_schar] = 
+        let arg_c_strs_ptrs: ~[*c_schar] =
             args.map(|s| s.to_c_str().unwrap() );
         let mut fuse_args = Struct_fuse_args {
             argv: transmute(vec::raw::to_ptr(arg_c_strs_ptrs)),
@@ -221,7 +221,7 @@ pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
                               ) == -1 {
             return;
         }
-        
+
         let fuse_chan = fuse_mount(mountpoint as *c_schar,
                                    ptr::to_mut_unsafe_ptr(&mut fuse_args));
         if fuse_chan == ptr::mut_null() {
@@ -229,9 +229,9 @@ pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
             stderr().write_line("Failed to mount\n");
             fail!();
         }
-        
+
         let llo = make_fuse_ll_oper(ops);
-        let fuse_session = 
+        let fuse_session =
             fuse_lowlevel_new(ptr::to_mut_unsafe_ptr(&mut fuse_args),
                               ptr::to_unsafe_ptr(&llo),
                               size_of::<Struct_fuse_lowlevel_ops>() as size_t,
@@ -241,7 +241,7 @@ pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
             stderr().write_line("Failed to create FUSE session\n");
             fail!();
         }
-        
+
         if fuse_set_signal_handlers(fuse_session) == -1 {
             stderr().write_line("Failed to set FUSE signal handlers");
             fail!();
@@ -309,7 +309,7 @@ pub fn make_fuse_ll_oper(ops:&FuseLowLevelOps)
 type ReplySuccessFn<T> = ~fn(req:fuse_req_t, reply:T);
 
 #[fixed_stack_segment]
-fn send_fuse_reply<T>(result:ErrnoResult<T>, req:fuse_req_t, 
+fn send_fuse_reply<T>(result:ErrnoResult<T>, req:fuse_req_t,
                       reply_success:ReplySuccessFn<T>) {
     match result {
         Ok(reply) => reply_success(req, reply),
@@ -319,7 +319,7 @@ fn send_fuse_reply<T>(result:ErrnoResult<T>, req:fuse_req_t,
 
 fn run_for_reply<T>(req:fuse_req_t, reply_success:ReplySuccessFn<T>,
                     do_op:~fn(&FuseLowLevelOps) -> ErrnoResult<T>) {
-    #[fixed_stack_segment] 
+    #[fixed_stack_segment]
     unsafe fn call_fuse_req_userdata(req:fuse_req_t) -> *mut c_void {
         fuse_req_userdata(req)
     }
@@ -619,7 +619,7 @@ extern fn mknod_impl(req:fuse_req_t, parent: fuse_ino_t, name:*c_schar,
     }
 }
 
-extern fn mkdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar, 
+extern fn mkdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar,
                      mode:mode_t) {
     do run_for_reply(req, reply_entryparam) |ops| {
         do handle_unimpl(&ops.mkdir) |f| {
@@ -855,7 +855,7 @@ extern fn removexattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar) {
     }
 }
 
-extern fn access_impl(req: fuse_req_t, 
+extern fn access_impl(req: fuse_req_t,
                       ino: fuse_ino_t, mask: c_int) {
     do run_for_reply(req, reply_zero_err) |ops| {
         do handle_unimpl(&ops.access) |f| {
