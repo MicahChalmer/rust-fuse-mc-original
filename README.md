@@ -29,7 +29,6 @@ The modules:
 There are some problems with it as it exists now:
 
   * That unfortunate struct of `Option<fn...>`s.  It really should be a trait...but I can't see how, at least not without resorting to even worse hacks than what I ended up with.
-  * Having functions return `ErrnoResult<()>` (effectively `Result<(),c_int>`) seems iffy as well.  It's there for consistency with the other functions which return an error with Err or a reply with data in Ok.
   * If the filesystem ops tasks fail, no reply is generated.  It should be able to come back with an error.
   * Something is screwy in `fuse_main` with how it handles signals.  Unlike the fuse hello_ll example, here if you SIGINT the process it doesn't unmount and die right away.  It waits until something tries to access the filesystem again, then produces an error (`Software caused connection abort`) and then dies.
   * As of now it spawns a thread for every new task it creates.  It shouldn't do that...it should spawn one for the blocking C calls, then let the default scheduler do the rest
