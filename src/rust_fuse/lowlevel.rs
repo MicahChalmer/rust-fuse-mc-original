@@ -98,61 +98,86 @@ pub type ErrnoResult<T> = Result<T, c_int>;
  * overridden, which means we don't know which entries in the
  * Struct_fuse_lowlevel_ops to null out.
 
- * Instead, we've got the rust direct equivalent of what the C API has: a struct
- * full of optional fns--equivalent to the struct of nullable function pointers
- * in C.  What you pass into here will look like Rust's imitation of Javascript.
- * But it's the best we can do without some sort of reflection API that rust
- * doesn't have, or a way to call the FUSE default behavior from a callback,
- * which FUSE does not have.
+ * Instead, we've got the rust direct equivalent of what the C API has: a
+ * struct full of optional fns--equivalent to the struct of nullable function
+ * pointers in C.  What you pass into here will look like Rust's imitation of
+ * Javascript.  But it's the best we can do without some sort of reflection API
+ * that rust doesn't have, or a way to call the FUSE default behavior from a
+ * callback, which FUSE does not have.
 
  */
 #[deriving(Zero)]
 pub struct FuseLowLevelOps<'self> {
     init: Option<&'self fn()>,
     destroy: Option<&'self fn()>,
-    lookup: Option<&'self fn(_parent: fuse_ino_t, _name: &str) -> ErrnoResult<EntryReply>>,
+    lookup: Option<&'self fn(_parent: fuse_ino_t, _name: &str)
+                             -> ErrnoResult<EntryReply>>,
     forget: Option<&'self fn(_ino:fuse_ino_t, _nlookup:c_ulong)>,
     getattr: Option<&'self fn(_ino: fuse_ino_t) -> ErrnoResult<AttrReply>>,
-    setattr: Option<&'self fn(_ino: fuse_ino_t, _attrs_to_set:&[AttrToSet], _fh:Option<u64>) -> ErrnoResult<AttrReply>>,
+    setattr: Option<&'self fn(_ino: fuse_ino_t, _attrs_to_set:&[AttrToSet],
+                              _fh:Option<u64>) -> ErrnoResult<AttrReply>>,
     readlink: Option<&'self fn(_ino: fuse_ino_t) -> ErrnoResult<~str>>,
-    mknod: Option<&'self fn(_parent: fuse_ino_t, _name: &str, _mode: mode_t, _rdev: dev_t) -> ErrnoResult<EntryReply>>,
-    mkdir: Option<&'self fn(_parent: fuse_ino_t, _name: &str, _mode: mode_t) -> ErrnoResult<EntryReply>>,
+    mknod: Option<&'self fn(_parent: fuse_ino_t, _name: &str, _mode: mode_t,
+                            _rdev: dev_t) -> ErrnoResult<EntryReply>>,
+    mkdir: Option<&'self fn(_parent: fuse_ino_t, _name: &str, _mode: mode_t)
+                            -> ErrnoResult<EntryReply>>,
     // TODO: Using the unit type with result seems kind of goofy, but;
     // is done for consistency with the others.  Is this right?;
-    unlink: Option<&'self fn(_parent: fuse_ino_t, _name: &str) -> ErrnoResult<()>>,
-    rmdir: Option<&'self fn(_parent: fuse_ino_t, _name: &str) -> ErrnoResult<()>>,
-    symlink: Option<&'self fn(_link:&str, _parent: fuse_ino_t, _name: &str) -> ErrnoResult<EntryReply>>,
-    rename: Option<&'self fn(_parent: fuse_ino_t, _name: &str, _newparent: fuse_ino_t, _newname: &str) -> ErrnoResult<()>>,
-    link: Option<&'self fn(_ino: fuse_ino_t, _newparent: fuse_ino_t, _newname: &str) -> ErrnoResult<EntryReply>>,
-    open: Option<&'self fn(_ino: fuse_ino_t, _flags: c_int) -> ErrnoResult<OpenReply>>,
-    read: Option<&'self fn(_ino: fuse_ino_t, _size: size_t, _off: off_t, _fh: u64) -> ErrnoResult<ReadReply>>,
+    unlink: Option<&'self fn(_parent: fuse_ino_t, _name: &str)
+                             -> ErrnoResult<()>>,
+    rmdir: Option<&'self fn(_parent: fuse_ino_t, _name: &str)
+                            -> ErrnoResult<()>>,
+    symlink: Option<&'self fn(_link:&str, _parent: fuse_ino_t, _name: &str)
+                              -> ErrnoResult<EntryReply>>,
+    rename: Option<&'self fn(_parent: fuse_ino_t, _name: &str,
+                             _newparent: fuse_ino_t, _newname: &str)
+                             -> ErrnoResult<()>>,
+    link: Option<&'self fn(_ino: fuse_ino_t, _newparent: fuse_ino_t,
+                           _newname: &str) -> ErrnoResult<EntryReply>>,
+    open: Option<&'self fn(_ino: fuse_ino_t, _flags: c_int) 
+                           -> ErrnoResult<OpenReply>>,
+    read: Option<&'self fn(_ino: fuse_ino_t, _size: size_t, _off: off_t,
+                           _fh: u64) -> ErrnoResult<ReadReply>>,
     // TODO: is writepage a bool, or an actual number that needs to be;
     // preserved?;
-    write: Option<&'self fn(_ino: fuse_ino_t, _buf:&[u8], _off: off_t, _fh: u64, _writepage: bool) -> ErrnoResult<size_t>>,
-    flush: Option<&'self fn(_ino: fuse_ino_t, _lock_owner: u64, _fh: u64) -> ErrnoResult<()>>,
-    release: Option<&'self fn(_ino: fuse_ino_t, _flags: c_int, _fh: u64) -> ErrnoResult<()>>,
-    fsync: Option<&'self fn(_ino: fuse_ino_t, _datasync: bool, _fh: u64) -> ErrnoResult<()>>,
+    write: Option<&'self fn(_ino: fuse_ino_t, _buf:&[u8], _off: off_t,
+                            _fh: u64, _writepage: bool) 
+                            -> ErrnoResult<size_t>>,
+    flush: Option<&'self fn(_ino: fuse_ino_t, _lock_owner: u64, _fh: u64)
+                            -> ErrnoResult<()>>,
+    release: Option<&'self fn(_ino: fuse_ino_t, _flags: c_int, _fh: u64)
+                              -> ErrnoResult<()>>,
+    fsync: Option<&'self fn(_ino: fuse_ino_t, _datasync: bool, _fh: u64)
+                            -> ErrnoResult<()>>,
     opendir: Option<&'self fn(_ino: fuse_ino_t) -> ErrnoResult<OpenReply>>,
-    readdir: Option<&'self fn(_ino: fuse_ino_t, _size: size_t, _off: off_t, _fh: u64) -> ErrnoResult<ReaddirReply>>,
-    releasedir: Option<&'self fn(_ino: fuse_ino_t, _fh: u64) -> ErrnoResult<()>>,
-    fsyncdir: Option<&'self fn(_ino: fuse_ino_t, _datasync: bool, _fh: u64) -> ErrnoResult<()>>,
+    readdir: Option<&'self fn(_ino: fuse_ino_t, _size: size_t, _off: off_t,
+                              _fh: u64) -> ErrnoResult<ReaddirReply>>,
+    releasedir: Option<&'self fn(_ino: fuse_ino_t, _fh: u64)
+                                 -> ErrnoResult<()>>,
+    fsyncdir: Option<&'self fn(_ino: fuse_ino_t, _datasync: bool, _fh: u64)
+                               -> ErrnoResult<()>>,
     statfs: Option<&'self fn(_ino: fuse_ino_t) -> ErrnoResult<Struct_statvfs>>,
-    setxattr: Option<&'self fn(_ino: fuse_ino_t, _name: &str, _value: &[u8], _flags: c_int) -> ErrnoResult<()>>,
+    setxattr: Option<&'self fn(_ino: fuse_ino_t, _name: &str, _value: &[u8],
+                               _flags: c_int) -> ErrnoResult<()>>,
     // TODO: examine this--ReadReply may not be appropraite here;
-    getxattr: Option<&'self fn(_ino: fuse_ino_t, _name: &str, _size: size_t) -> ErrnoResult<ReadReply>>,
+    getxattr: Option<&'self fn(_ino: fuse_ino_t, _name: &str, _size: size_t)
+                               -> ErrnoResult<ReadReply>>,
     // Called on getxattr with size of zero (meaning a query of total size);
-    getxattr_size: Option<&'self fn(_ino: fuse_ino_t, _name: &str) -> ErrnoResult<size_t>>,
+    getxattr_size: Option<&'self fn(_ino: fuse_ino_t, _name: &str)
+                                    -> ErrnoResult<size_t>>,
     // TODO: examine this--ReadReply may not be appropraite here;
-    listxattr: Option<&'self fn(_ino: fuse_ino_t, _size: size_t) -> ErrnoResult<ReadReply>>,
+    listxattr: Option<&'self fn(_ino: fuse_ino_t, _size: size_t)
+                                -> ErrnoResult<ReadReply>>,
     // Called on listxattr with size of zero (meaning a query of total size);
     listxattr_size: Option<&'self fn(_ino: fuse_ino_t) -> ErrnoResult<size_t>>,
-    removexattr: Option<&'self fn(_ino: fuse_ino_t, _name: &str) -> ErrnoResult<()>>,
-    access: Option<&'self fn(_ino: fuse_ino_t, _mask: c_int) -> ErrnoResult<()>>,
-    create: Option<&'self fn(_parent: fuse_ino_t, _name: &str, _mode: mode_t, _flags: c_int) -> ErrnoResult<CreateReply>>,
+    removexattr: Option<&'self fn(_ino: fuse_ino_t, _name: &str)
+                                  -> ErrnoResult<()>>,
+    access: Option<&'self fn(_ino: fuse_ino_t, _mask: c_int)
+                             -> ErrnoResult<()>>,
+    create: Option<&'self fn(_parent: fuse_ino_t, _name: &str, _mode: mode_t,
+                             _flags: c_int) -> ErrnoResult<CreateReply>>,
 
-    // TODO: The following, which didn't even exist in earlier versions of FUSE,
-    // can be considered nice-to-have (to an even greater extent than the whole
-    // project can at this point):
+    // TODO: The following, still need implementing:
     //
     // getlk
     // setlk
@@ -182,7 +207,8 @@ fn userdata_to_ops<T, U>(userdata:*mut c_void, arg:U,
 #[fixed_stack_segment]
 pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
     unsafe {
-        let arg_c_strs_ptrs: ~[*c_schar] = args.map(|s| s.to_c_str().unwrap() );
+        let arg_c_strs_ptrs: ~[*c_schar] = 
+            args.map(|s| s.to_c_str().unwrap() );
         let mut fuse_args = Struct_fuse_args {
             argv: transmute(vec::raw::to_ptr(arg_c_strs_ptrs)),
             argc: args.len() as c_int,
@@ -192,12 +218,13 @@ pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
         if fuse_parse_cmdline(ptr::to_mut_unsafe_ptr(&mut fuse_args),
                               ptr::to_mut_unsafe_ptr(&mut mountpoint),
                               ptr::mut_null(), // multithreaded--we ignore
-                              ptr::mut_null() // foreground--we ignore (for now)
+                              ptr::mut_null() // foreground--ignore (for now)
                               ) == -1 {
             return;
         }
         
-        let fuse_chan = fuse_mount(mountpoint as *c_schar, ptr::to_mut_unsafe_ptr(&mut fuse_args));
+        let fuse_chan = fuse_mount(mountpoint as *c_schar,
+                                   ptr::to_mut_unsafe_ptr(&mut fuse_args));
         if fuse_chan == ptr::mut_null() {
             // TODO: better error message?
             stderr().write_line("Failed to mount\n");
@@ -205,10 +232,11 @@ pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
         }
         
         let llo = make_fuse_ll_oper(ops);
-        let fuse_session = fuse_lowlevel_new(ptr::to_mut_unsafe_ptr(&mut fuse_args),
-                                             ptr::to_unsafe_ptr(&llo),
-                                             size_of::<Struct_fuse_lowlevel_ops>() as size_t,
-                                             ptr::to_unsafe_ptr(&ops) as *mut c_void);
+        let fuse_session = 
+            fuse_lowlevel_new(ptr::to_mut_unsafe_ptr(&mut fuse_args),
+                              ptr::to_unsafe_ptr(&llo),
+                              size_of::<Struct_fuse_lowlevel_ops>() as size_t,
+                              ptr::to_unsafe_ptr(&ops) as *mut c_void);
         if fuse_session == ptr::mut_null() {
             // TODO: better error message?
             stderr().write_line("Failed to create FUSE session\n");
@@ -314,7 +342,8 @@ fn run_for_reply<T>(req:fuse_req_t, reply_success:ReplySuccessFn<T>,
 fn cptr_to_str<T>(cptr:*c_schar, func:&fn(&str) -> T) -> T {
     unsafe {
         let cstr = CString::new(cptr,false);
-        func(str::from_utf8_slice(cstr.as_bytes()).trim_right_chars(&(0u8 as char)))
+        func(str::from_utf8_slice(
+                cstr.as_bytes()).trim_right_chars(&(0u8 as char)))
     }
 }
 
@@ -328,7 +357,8 @@ fn reply_entryparam(req: fuse_req_t, reply:EntryReply) {
 #[fixed_stack_segment]
 fn reply_attr(req: fuse_req_t, reply: AttrReply) {
     unsafe {
-        fuse_reply_attr(req, ptr::to_unsafe_ptr(&reply.attr), reply.attr_timeout);
+        fuse_reply_attr(req, ptr::to_unsafe_ptr(&reply.attr),
+                        reply.attr_timeout);
     }
 }
 
@@ -417,7 +447,8 @@ fn reply_readdir(req: fuse_req_t, tuple: (size_t, ReaddirReply)) {
                     let buf_ptr = ptr::mut_offset(vec::raw::to_mut_ptr(buf),
                                                   returned_size as int);
                     let remaining_size = buf_size - returned_size;
-                    let added_size = do entry.name.to_c_str().with_ref |name_cstr| {
+                    let entry_name_c = entry.name.to_c_str();
+                    let added_size = do entry_name_c.with_ref |name_cstr| {
                         let stbuf = stat{
                             st_mode: entry.mode,
                             st_ino: entry.ino,
@@ -495,7 +526,8 @@ extern fn destroy_impl(userdata:*mut c_void) {
 }
 
 macro_rules! multi_do {
-    (|$args:pat| <- $e:expr; $(|$args_rest:pat| <- $e_rest:expr;)+ => $blk:block) =>
+    (|$args:pat| <- $e:expr; $(|$args_rest:pat| <- $e_rest:expr;)+
+     => $blk:block) =>
         (do $e |$args| { multi_do!($(|$args_rest| <- $e_rest;)+ => $blk) });
     {|$args:pat| <- $e:expr; => $blk:block} => (do $e |$args| $blk);
 }
@@ -541,14 +573,30 @@ extern fn setattr_impl(req: fuse_req_t, ino: fuse_ino_t, attr:*stat,
         do handle_unimpl(&ops.setattr) |f| {
             unsafe {
                 let mut attrs_to_set:~[AttrToSet] = vec::with_capacity(8);
-                if to_set & FUSE_SET_ATTR_MODE != 0 { attrs_to_set.push(Mode((*attr).st_mode)) }
-                if to_set & FUSE_SET_ATTR_UID != 0 { attrs_to_set.push(Uid((*attr).st_uid)) }
-                if to_set & FUSE_SET_ATTR_GID != 0 { attrs_to_set.push(Gid((*attr).st_gid)) }
-                if to_set & FUSE_SET_ATTR_SIZE != 0 { attrs_to_set.push(Size((*attr).st_size)) }
-                if to_set & FUSE_SET_ATTR_ATIME != 0 { attrs_to_set.push(Atime((*attr).st_atime)) }
-                if to_set & FUSE_SET_ATTR_MTIME != 0 { attrs_to_set.push(Mtime((*attr).st_mtime)) }
-                if to_set & FUSE_SET_ATTR_ATIME_NOW != 0 { attrs_to_set.push(Atime_now) }
-                if to_set & FUSE_SET_ATTR_MTIME_NOW != 0 { attrs_to_set.push(Mtime_now) }
+                if to_set & FUSE_SET_ATTR_MODE != 0 {
+                    attrs_to_set.push(Mode((*attr).st_mode))
+                }
+                if to_set & FUSE_SET_ATTR_UID != 0 {
+                    attrs_to_set.push(Uid((*attr).st_uid))
+                }
+                if to_set & FUSE_SET_ATTR_GID != 0 {
+                    attrs_to_set.push(Gid((*attr).st_gid))
+                }
+                if to_set & FUSE_SET_ATTR_SIZE != 0 {
+                    attrs_to_set.push(Size((*attr).st_size))
+                }
+                if to_set & FUSE_SET_ATTR_ATIME != 0 {
+                    attrs_to_set.push(Atime((*attr).st_atime))
+                }
+                if to_set & FUSE_SET_ATTR_MTIME != 0 {
+                    attrs_to_set.push(Mtime((*attr).st_mtime))
+                }
+                if to_set & FUSE_SET_ATTR_ATIME_NOW != 0 {
+                    attrs_to_set.push(Atime_now)
+                }
+                if to_set & FUSE_SET_ATTR_MTIME_NOW != 0 {
+                    attrs_to_set.push(Mtime_now)
+                }
 
                 (*f)(ino, attrs_to_set, fi.to_option().map(|fi| fi.fh))
             }
@@ -611,8 +659,8 @@ extern fn symlink_impl(req: fuse_req_t, link: *c_schar, parent: fuse_ino_t,
     }
 }
 
-extern fn rename_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar, newparent: fuse_ino_t,
-                      newname: *c_schar) {
+extern fn rename_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar,
+                      newparent: fuse_ino_t, newname: *c_schar) {
     do run_for_reply(req, reply_zero_err) |ops| {
         do handle_unimpl(&ops.rename) |f| {
             do cptr_to_str(name) |name| {
@@ -712,8 +760,8 @@ extern fn opendir_impl(req: fuse_req_t, ino: fuse_ino_t,
     }
 }
 
-extern fn readdir_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t, off: off_t,
-                       fi: *Struct_fuse_file_info) {
+extern fn readdir_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t,
+                       off: off_t, fi: *Struct_fuse_file_info) {
     do run_for_reply(req, reply_readdir) |ops| {
         do handle_unimpl(&ops.readdir) |f| {
             unsafe {

@@ -3,4 +3,4 @@
 #[crate_type = "lib"];
 
 pub mod lowlevel;
-mod ffi;
+pub mod ffi;
