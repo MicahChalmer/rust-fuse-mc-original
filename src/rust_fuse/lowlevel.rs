@@ -493,13 +493,13 @@ fn reply_xattr(req: fuse_req_t, size: size_t) {
     }
 }
 
-fn handle_unimpl<F, T>(opt:&Option<F>, imp:&fn(&F) -> ErrnoResult<T>)
-                       -> ErrnoResult<T> {
+fn handle_unimpl<F, T>(opt:&Option<F>, name:&str,
+                       imp:&fn(&F) -> ErrnoResult<T>) -> ErrnoResult<T> {
     match *opt {
         Some(ref f) => imp(f),
         None => {
-            error!("FUSE called a callback for which there was no"+
-                   "fn supplied.  This should never happen.");
+            error!("FUSE called a callback %s, but there was no fn supplied. This should never happen.",
+                   name);
             Err(ENOSYS)
         }
     }
@@ -523,31 +523,33 @@ extern fn destroy_impl(userdata:*mut c_void) {
     }
 }
 
+macro_rules! run_for_reply_if_impl {
+    ($opfunc:ident, $replyfunc:expr, $body:block) => (
+        do run_for_reply(req, $replyfunc) |ops| {
+            do handle_unimpl(&ops.$opfunc,stringify!($opfunc)) |f|
+                $body
+        })
+}
+
 extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
-    do run_for_reply(req, reply_entryparam) |ops| {
-        do handle_unimpl(&ops.lookup) |f| {
+    run_for_reply_if_impl!(lookup, reply_entryparam, {
             do cptr_to_str(name) |name| {
                 (*f)(parent, name)
             }
-        }
-    }
+        })
 }
 
 extern fn forget_impl(req: fuse_req_t, ino: fuse_ino_t, nlookup:c_ulong) {
-    do run_for_reply(req, reply_none) |ops| {
-        do handle_unimpl(&ops.forget) |f| {
+    run_for_reply_if_impl!(forget, reply_none, {
             (*f)(ino, nlookup); Ok(())
-        }
-    }
+        })
 }
 
 extern fn getattr_impl(req:fuse_req_t, ino: fuse_ino_t,
                        _fi:*Struct_fuse_file_info) {
-    do run_for_reply(req, reply_attr) |ops| {
-        do handle_unimpl(&ops.getattr) |f| {
+    run_for_reply_if_impl!(getattr, reply_attr, {
             (*f)(ino)
-        }
-    }
+        })
 }
 
 extern fn setattr_impl(req: fuse_req_t, ino: fuse_ino_t, attr:*stat,
@@ -560,8 +562,7 @@ extern fn setattr_impl(req: fuse_req_t, ino: fuse_ino_t, attr:*stat,
     static FUSE_SET_ATTR_MTIME:int = (1 << 5);
     static FUSE_SET_ATTR_ATIME_NOW:int = (1 << 7);
     static FUSE_SET_ATTR_MTIME_NOW:int = (1 << 8);
-    do run_for_reply(req, reply_attr) |ops| {
-        do handle_unimpl(&ops.setattr) |f| {
+    run_for_reply_if_impl!(setattr, reply_attr, {
             unsafe {
                 let mut attrs_to_set:~[AttrToSet] = vec::with_capacity(8);
                 if to_set & FUSE_SET_ATTR_MODE != 0 {
@@ -591,211 +592,171 @@ extern fn setattr_impl(req: fuse_req_t, ino: fuse_ino_t, attr:*stat,
 
                 (*f)(ino, attrs_to_set, fi.to_option().map(|fi| fi.fh))
             }
-        }
-    }
+        })
 }
 
 extern fn readlink_impl(req: fuse_req_t, ino: fuse_ino_t) {
-    do run_for_reply(req, reply_readlink) |ops| {
-        do handle_unimpl(&ops.readlink) |f| {
+    run_for_reply_if_impl!(readlink, reply_readlink, {
             (*f)(ino)
-        }
-    }
+        })
 }
 
 extern fn mknod_impl(req:fuse_req_t, parent: fuse_ino_t, name:*c_schar,
                      mode: mode_t, rdev: dev_t) {
-    do run_for_reply(req, reply_entryparam) |ops| {
-        do handle_unimpl(&ops.mknod) |f| {
+    run_for_reply_if_impl!(mknod, reply_entryparam, {
             do cptr_to_str(name) |name| { (*f)(parent, name, mode, rdev) }
-        }
-    }
+        })
 }
 
 extern fn mkdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar,
                      mode:mode_t) {
-    do run_for_reply(req, reply_entryparam) |ops| {
-        do handle_unimpl(&ops.mkdir) |f| {
+    run_for_reply_if_impl!(mkdir, reply_entryparam, {
             do cptr_to_str(name) |name| { (*f)(parent, name, mode) }
-        }
-    }
+        })
 }
 
 extern fn unlink_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.unlink) |f| {
+    run_for_reply_if_impl!(unlink, reply_zero_err, {
             do cptr_to_str(name) |name| { (*f)(parent, name) }
-        }
-    }
+        })
 }
 
 extern fn rmdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.rmdir) |f| {
+    run_for_reply_if_impl!(rmdir, reply_zero_err, {
             do cptr_to_str(name) |name| { (*f)(parent, name) }
-        }
-    }
+        })
 }
 
 extern fn symlink_impl(req: fuse_req_t, link: *c_schar, parent: fuse_ino_t,
                        name: *c_schar) {
-    do run_for_reply(req, reply_entryparam) |ops| {
-        do handle_unimpl(&ops.symlink) |f| {
+    run_for_reply_if_impl!(symlink, reply_entryparam, {
             do cptr_to_str(link) |link| {
                 do cptr_to_str(name) |name| {
                     (*f)(link, parent, name)
                 }
             }
-        }
-    }
+        })
 }
 
 extern fn rename_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar,
                       newparent: fuse_ino_t, newname: *c_schar) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.rename) |f| {
+    run_for_reply_if_impl!(rename, reply_zero_err, {
             do cptr_to_str(name) |name| {
                 do cptr_to_str(newname) |newname| {
                     (*f)(parent, name, newparent,newname)
                 }
             }
-        }
-    }
+        })
 }
 
 extern fn link_impl(req: fuse_req_t, ino: fuse_ino_t, newparent: fuse_ino_t,
                     newname: *c_schar) {
-    do run_for_reply(req, reply_entryparam) |ops| {
-        do handle_unimpl(&ops.link) |f| {
+    run_for_reply_if_impl!(link, reply_entryparam, {
             do cptr_to_str(newname) |newname| {
                 (*f)(ino, newparent, newname)
             }
-        }
-    }
+        })
 }
 
 extern fn open_impl(req: fuse_req_t, ino: fuse_ino_t,
                     fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_open) |ops| {
-        do handle_unimpl(&ops.open) |f| {
+    run_for_reply_if_impl!(open, reply_open, {
             unsafe {
                 (*f)(ino, (*fi).flags)
             }
-        }
-    }
+        })
 }
 
 extern fn read_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t, off: off_t,
                     fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_read) |ops| {
-        do handle_unimpl(&ops.read) |f| {
+    run_for_reply_if_impl!(read, reply_read, {
             unsafe {
                 (*f)(ino, size, off, (*fi).fh)
             }
-        }
-    }
+        })
 }
 
 extern fn write_impl(req: fuse_req_t, ino: fuse_ino_t, buf: *u8,
                      size: size_t, off: off_t, fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_write) |ops| {
-        do handle_unimpl(&ops.write) |f| {
+    run_for_reply_if_impl!(write, reply_write, {
             unsafe {
                 do vec::raw::buf_as_slice(buf, size as uint) |vec| {
                     (*f)(ino, vec, off, (*fi).fh, ((*fi).writepage != 0))
                 }
             }
-        }
-    }
+        })
 }
 
 extern fn flush_impl(req: fuse_req_t, ino: fuse_ino_t,
                      fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.flush) |f| {
+    run_for_reply_if_impl!(flush, reply_zero_err, {
             unsafe {
                 (*f)(ino, (*fi).lock_owner, (*fi).fh)
             }
-        }
-    }
+        })
 }
 
 extern fn release_impl(req: fuse_req_t, ino: fuse_ino_t,
                        fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.release) |f| {
+    run_for_reply_if_impl!(release, reply_zero_err, {
             unsafe {
                 (*f)(ino, (*fi).flags, (*fi).fh)
             }
-        }
-    }
+        })
 }
 
 extern fn fsync_impl(req: fuse_req_t, ino: fuse_ino_t, datasync: c_int,
                      fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.fsync) |f| {
+    run_for_reply_if_impl!(fsync, reply_zero_err, {
             unsafe {
                 (*f)(ino, (datasync != 0), (*fi).fh)
             }
-        }
-    }
+        })
 }
 
 extern fn opendir_impl(req: fuse_req_t, ino: fuse_ino_t,
                        _fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_open) |ops| {
-        do handle_unimpl(&ops.opendir) |f| {
+    run_for_reply_if_impl!(opendir, reply_open, {
             (*f)(ino)
-        }
-    }
+        })
 }
 
 extern fn readdir_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t,
                        off: off_t, fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_readdir) |ops| {
-        do handle_unimpl(&ops.readdir) |f| {
+    run_for_reply_if_impl!(readdir, reply_readdir, {
             unsafe {
                 (*f)(ino, size, off, (*fi).fh)
             }.chain(|rr| Ok((size, rr)))
-        }
-    }
+        })
 }
 
 extern fn releasedir_impl(req: fuse_req_t, ino: fuse_ino_t,
                           fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.releasedir) |f| {
+    run_for_reply_if_impl!(releasedir, reply_zero_err, {
             unsafe {
                 (*f)(ino, (*fi).fh)
             }
-        }
-    }
+        })
 }
 
 extern fn fsyncdir_impl(req: fuse_req_t, ino: fuse_ino_t, datasync: c_int,
                         fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.fsyncdir) |f| {
+    run_for_reply_if_impl!(fsyncdir, reply_zero_err, {
             unsafe {
                 (*f)(ino, (datasync != 0), (*fi).fh)
             }
-        }
-    }
+        })
 }
 
 extern fn statfs_impl(req: fuse_req_t, ino: fuse_ino_t) {
-    do run_for_reply(req, reply_statfs) |ops| {
-        do handle_unimpl(&ops.statfs) |f| {
+    run_for_reply_if_impl!(statfs, reply_statfs, {
             (*f)(ino)
-        }
-    }
+        })
 }
 
 extern fn setxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
                         value: *u8, size: size_t, flags: c_int) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.setxattr) |f| {
+    run_for_reply_if_impl!(setxattr, reply_zero_err, {
             unsafe {
                 do vec::raw::buf_as_slice(value, size as uint) |vec| {
                     do cptr_to_str(name) |name| {
@@ -803,69 +764,54 @@ extern fn setxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
                     }
                 }
             }
-        }
-    }
+        })
 }
 
 extern fn getxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
                         size: size_t) {
     if size == 0 {
-        do run_for_reply(req, reply_xattr) |ops| {
-            do handle_unimpl(&ops.getxattr_size) |f| {
+        run_for_reply_if_impl!(getxattr_size, reply_xattr, {
                 do cptr_to_str(name) |name| { (*f)(ino, name) }
-            }
-        }
+            })
     } else {
-        do run_for_reply(req, reply_read) |ops| {
-            do handle_unimpl(&ops.getxattr) |f| {
+        run_for_reply_if_impl!(getxattr, reply_read, {
                 do cptr_to_str(name) |name| { (*f)(ino, name, size) }
-            }
-        }
+            })
     }
 }
 
 extern fn listxattr_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t) {
     if size == 0 {
-        do run_for_reply(req, reply_xattr) |ops| {
-            do handle_unimpl(&ops.listxattr_size) |f| {
+        run_for_reply_if_impl!(listxattr_size, reply_xattr, {
                 (*f)(ino)
-            }
-        }
+            })
     } else {
-        do run_for_reply(req, reply_read) |ops| {
-            do handle_unimpl(&ops.listxattr) |f| {
+        run_for_reply_if_impl!(listxattr, reply_read, {
                 (*f)(ino, size)
-            }
-        }
+            })
     }
 }
 
 extern fn removexattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.removexattr) |f| {
+    run_for_reply_if_impl!(removexattr, reply_zero_err, {
             do cptr_to_str(name) |name| { (*f)(ino, name) }
-        }
-    }
+        })
 }
 
 extern fn access_impl(req: fuse_req_t,
                       ino: fuse_ino_t, mask: c_int) {
-    do run_for_reply(req, reply_zero_err) |ops| {
-        do handle_unimpl(&ops.access) |f| {
+    run_for_reply_if_impl!(access, reply_zero_err, {
             (*f)(ino, mask)
-        }
-    }
+        })
 }
 
 extern fn create_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar,
                       mode: mode_t, fi: *Struct_fuse_file_info) {
-    do run_for_reply(req, reply_create) |ops| {
-        do handle_unimpl(&ops.create) |f| {
+    run_for_reply_if_impl!(create, reply_create, {
             unsafe {
                 do cptr_to_str(name) |name| {
                     (*f)(parent, name, mode, (*fi).flags)
                 }
             }
-        }
-    }
+        })
 }
