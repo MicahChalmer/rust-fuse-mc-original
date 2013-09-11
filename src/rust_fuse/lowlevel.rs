@@ -25,7 +25,7 @@ use std::str;
 use std::num::zero;
 use std::bool::to_bit;
 use std::cmp;
-use std::iterator::AdditiveIterator;
+use std::iter::AdditiveIterator;
 use ffi::*;
 use std::path::stat::arch::default_stat;
 use std::libc::ENOSYS;
