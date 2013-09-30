@@ -392,7 +392,6 @@ struct FSOperation {
 
 struct FuseSession {
     session: *mut Struct_fuse_session,
-    fuse_chan: *mut Struct_fuse_chan,
     mount_point: PosixPath
 }
 
@@ -444,8 +443,7 @@ pub fn c_api_loop(session_chan: ChanOne<~FuseSession>,
         let mountpoint_str = str::from_utf8(
             cstr_as_bytes_no_term(&mountpoint_cstr));
         session_chan.send(~FuseSession{session:fuse_session,
-                                       mount_point:PosixPath(mountpoint_str),
-                                       fuse_chan: fuse_chan});
+                                       mount_point:PosixPath(mountpoint_str)});
 
         fuse_session_add_chan(fuse_session, fuse_chan);
         fuse_session_loop(fuse_session);
