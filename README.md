@@ -33,7 +33,7 @@ There are some problems with it as it exists now:
   * That unfortunate struct of `Option<fn...>`s.  It really should be a trait...but I can't see how, at least not without resorting to even worse hacks than what I ended up with.
   * Signals are not handled.   Someone is working on adding the ability to handle signals to rust in mozilla/rust#9318.  Until then...nada.
   * Due to the aforementioned lack of signal handling, there is no way to wake up the C API thread properly (the only way supported by the FUSE library is with a signal.)  There is a ridiculous hack in place to get around it involving having one specific name unusable within the FS, and using it as a signal instead.
-    * The APIs for some specific FS calls are not quite right.  These are marked with TODO in src/rust_fuse/lowlevel.rs.
+  * The APIs for some specific FS calls are not quite right.  These are marked with TODO in src/rust_fuse/lowlevel.rs.
 
 # MISSING PIECES
 
