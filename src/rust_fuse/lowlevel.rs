@@ -26,6 +26,7 @@ use std::bool::to_bit;
 use std::cmp;
 use std::iter::AdditiveIterator;
 use ffi::*;
+use ffi::arch::*;
 use super::stat::stat::arch::default_stat;
 use std::libc;
 use std::util::NonCopyable;
