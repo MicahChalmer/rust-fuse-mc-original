@@ -4,3 +4,4 @@
 
 pub mod lowlevel;
 pub mod ffi;
+pub mod stat;

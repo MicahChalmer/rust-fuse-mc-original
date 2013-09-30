@@ -10,29 +10,33 @@ use std::libc::{
     mode_t,
     off_t,
     size_t,
-    stat,
     time_t,
     uid_t,
+    EIO
 };
-use std::io::stderr;
 use std::sys::size_of;
 use std::cast::transmute;
 use std::ptr;
 use std::vec;
-use std::task::{task, SingleThreaded};
-use std::c_str::CString;
-use std::str;
-use std::num::zero;
+use std::task::{task, DefaultScheduler, SingleThreaded, TaskResult};
+use std::task;
+use std::c_str::{CString,ToCStr};
+use std::default::Default;
 use std::bool::to_bit;
 use std::cmp;
 use std::iter::AdditiveIterator;
 use ffi::*;
-use std::path::stat::arch::default_stat;
-use std::libc::ENOSYS;
+use super::stat::stat::arch::default_stat;
+use std::libc;
+use std::util::NonCopyable;
+use std::cell::Cell;
+use std::comm::{oneshot, ChanOne};
+use std::str;
+
 pub use ffi::{fuse_ino_t,Struct_fuse_entry_param};
 
 /// Information to be returned from open
-#[deriving(Zero)]
+#[deriving(Default)]
 pub struct OpenReply {
     direct_io:bool,
     keep_cache:bool,
@@ -45,7 +49,7 @@ pub struct CreateReply {
 }
 
 pub struct AttrReply {
-    attr: stat,
+    attr: libc::stat,
     attr_timeout: c_double
 }
 
@@ -69,10 +73,9 @@ pub enum ReadReply {
     EOF
 }
 
-#[deriving(Clone)]
 pub struct DirEntry {
     ino: fuse_ino_t,
-    name: ~str,
+    name: CString,
     mode: mode_t,
     next_offset: off_t
 }
@@ -88,94 +91,92 @@ pub type ErrnoResult<T> = Result<T, c_int>;
 
 /**
  * Structure of callbacks to pass into fuse_main.
-
- * It would be best if a user of this could be a trait, and a user could just
- * implement the methods as desired, leaving the rest as defaults.
- * Unfortunately that's not quite possible.  FUSE has default behavior for some
- * ops that can't just be invoked from a callback--the only way to get it is to
- * pass NULL for the callback pointers into the fuse_lowlevel_ops structure.
- * But we can't know at run time which default methods of a trait were
- * overridden, which means we don't know which entries in the
- * Struct_fuse_lowlevel_ops to null out.
-
- * Instead, we've got the rust direct equivalent of what the C API has: a
- * struct full of optional fns--equivalent to the struct of nullable function
- * pointers in C.  What you pass into here will look like Rust's imitation of
- * Javascript.  But it's the best we can do without some sort of reflection API
- * that rust doesn't have, or a way to call the FUSE default behavior from a
- * callback, which FUSE does not have.
-
+ *
+ * It would be best if this could be a trait, and a user could just implement
+ * the methods as desired, leaving the rest as defaults.  Unfortunately that's
+ * not quite possible.  FUSE has default behavior for some ops that can't just
+ * be invoked from a callback--the only way to get it is to pass NULL for the
+ * callback pointers into the fuse_lowlevel_ops structure.  But we can't know
+ * at run time which default methods of a trait were overridden, which means we
+ * don't know which entries in the Struct_fuse_lowlevel_ops to null out.
+ *
+ * Instead, we've got a struct full of optional fns, equivalent to the struct
+ * of nullable function pointers in C.  It's the best we can do without some
+ * sort of reflection API that rust doesn't have, or a way to call the FUSE
+ * default behavior from a callback, which FUSE does not have.
+ *
  */
-#[deriving(Zero)]
-pub struct FuseLowLevelOps<'self> {
-    init: Option<&'self fn()>,
-    destroy: Option<&'self fn()>,
-    lookup: Option<&'self fn(_parent: fuse_ino_t, _name: &str)
+#[deriving(Default)]
+pub struct FuseLowLevelOps {
+    init: Option<~fn()>,
+    destroy: Option<~fn()>,
+    lookup: Option<~fn(parent: fuse_ino_t, name: &CString)
                              -> ErrnoResult<EntryReply>>,
-    forget: Option<&'self fn(_ino:fuse_ino_t, _nlookup:c_ulong)>,
-    getattr: Option<&'self fn(_ino: fuse_ino_t) -> ErrnoResult<AttrReply>>,
-    setattr: Option<&'self fn(_ino: fuse_ino_t, _attrs_to_set:&[AttrToSet],
-                              _fh:Option<u64>) -> ErrnoResult<AttrReply>>,
-    readlink: Option<&'self fn(_ino: fuse_ino_t) -> ErrnoResult<~str>>,
-    mknod: Option<&'self fn(_parent: fuse_ino_t, _name: &str, _mode: mode_t,
-                            _rdev: dev_t) -> ErrnoResult<EntryReply>>,
-    mkdir: Option<&'self fn(_parent: fuse_ino_t, _name: &str, _mode: mode_t)
+    forget: Option<~fn(ino:fuse_ino_t, nlookup:c_ulong)>,
+    getattr: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<AttrReply>>,
+    setattr: Option<~fn(ino: fuse_ino_t, _attrs_toset:&[AttrToSet],
+                              fh:Option<u64>) -> ErrnoResult<AttrReply>>,
+    readlink: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<~str>>,
+    mknod: Option<~fn(parent: fuse_ino_t, name: &CString, 
+                            mode: mode_t, rdev: dev_t) 
                             -> ErrnoResult<EntryReply>>,
-    // TODO: Using the unit type with result seems kind of goofy, but;
-    // is done for consistency with the others.  Is this right?;
-    unlink: Option<&'self fn(_parent: fuse_ino_t, _name: &str)
+    mkdir: Option<~fn(parent: fuse_ino_t, name: &CString,
+                            mode: mode_t) -> ErrnoResult<EntryReply>>,
+    unlink: Option<~fn(parent: fuse_ino_t, name: &CString)
                              -> ErrnoResult<()>>,
-    rmdir: Option<&'self fn(_parent: fuse_ino_t, _name: &str)
+    rmdir: Option<~fn(parent: fuse_ino_t, name: &CString)
                             -> ErrnoResult<()>>,
-    symlink: Option<&'self fn(_link:&str, _parent: fuse_ino_t, _name: &str)
-                              -> ErrnoResult<EntryReply>>,
-    rename: Option<&'self fn(_parent: fuse_ino_t, _name: &str,
-                             _newparent: fuse_ino_t, _newname: &str)
+    symlink: Option<~fn(link:&CString, parent: fuse_ino_t,
+                              name: &CString) -> ErrnoResult<EntryReply>>,
+    rename: Option<~fn(parent: fuse_ino_t, name: &CString,
+                             newparent: fuse_ino_t, newname: &CString)
                              -> ErrnoResult<()>>,
-    link: Option<&'self fn(_ino: fuse_ino_t, _newparent: fuse_ino_t,
-                           _newname: &str) -> ErrnoResult<EntryReply>>,
-    open: Option<&'self fn(_ino: fuse_ino_t, _flags: c_int)
+    link: Option<~fn(ino: fuse_ino_t, newparent: fuse_ino_t,
+                           newname: &CString) -> ErrnoResult<EntryReply>>,
+    open: Option<~fn(ino: fuse_ino_t, flags: c_int)
                            -> ErrnoResult<OpenReply>>,
-    read: Option<&'self fn(_ino: fuse_ino_t, _size: size_t, _off: off_t,
-                           _fh: u64) -> ErrnoResult<ReadReply>>,
+    read: Option<~fn(ino: fuse_ino_t, size: size_t, off: off_t,
+                           fh: u64) -> ErrnoResult<ReadReply>>,
     // TODO: is writepage a bool, or an actual number that needs to be;
     // preserved?;
-    write: Option<&'self fn(_ino: fuse_ino_t, _buf:&[u8], _off: off_t,
-                            _fh: u64, _writepage: bool)
+    write: Option<~fn(ino: fuse_ino_t, buf:&[u8], off: off_t,
+                            fh: u64, writepage: bool)
                             -> ErrnoResult<size_t>>,
-    flush: Option<&'self fn(_ino: fuse_ino_t, _lock_owner: u64, _fh: u64)
+    flush: Option<~fn(ino: fuse_ino_t, _lockowner: u64, fh: u64)
                             -> ErrnoResult<()>>,
-    release: Option<&'self fn(_ino: fuse_ino_t, _flags: c_int, _fh: u64)
+    release: Option<~fn(ino: fuse_ino_t, flags: c_int, fh: u64)
                               -> ErrnoResult<()>>,
-    fsync: Option<&'self fn(_ino: fuse_ino_t, _datasync: bool, _fh: u64)
+    fsync: Option<~fn(ino: fuse_ino_t, datasync: bool, fh: u64)
                             -> ErrnoResult<()>>,
-    opendir: Option<&'self fn(_ino: fuse_ino_t) -> ErrnoResult<OpenReply>>,
-    readdir: Option<&'self fn(_ino: fuse_ino_t, _size: size_t, _off: off_t,
-                              _fh: u64) -> ErrnoResult<ReaddirReply>>,
-    releasedir: Option<&'self fn(_ino: fuse_ino_t, _fh: u64)
+    opendir: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<OpenReply>>,
+    readdir: Option<~fn(ino: fuse_ino_t, size: size_t, off: off_t,
+                              fh: u64) -> ErrnoResult<ReaddirReply>>,
+    releasedir: Option<~fn(ino: fuse_ino_t, fh: u64)
                                  -> ErrnoResult<()>>,
-    fsyncdir: Option<&'self fn(_ino: fuse_ino_t, _datasync: bool, _fh: u64)
+    fsyncdir: Option<~fn(ino: fuse_ino_t, datasync: bool, fh: u64)
                                -> ErrnoResult<()>>,
-    statfs: Option<&'self fn(_ino: fuse_ino_t) -> ErrnoResult<Struct_statvfs>>,
-    setxattr: Option<&'self fn(_ino: fuse_ino_t, _name: &str, _value: &[u8],
-                               _flags: c_int) -> ErrnoResult<()>>,
+    statfs: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<Struct_statvfs>>,
+    setxattr: Option<~fn(ino: fuse_ino_t, name: &CString,
+                               value: &[u8], flags: c_int)
+                               -> ErrnoResult<()>>,
     // TODO: examine this--ReadReply may not be appropraite here;
-    getxattr: Option<&'self fn(_ino: fuse_ino_t, _name: &str, _size: size_t)
-                               -> ErrnoResult<ReadReply>>,
+    getxattr: Option<~fn(ino: fuse_ino_t, name: &CString,
+                               size: size_t) -> ErrnoResult<ReadReply>>,
     // Called on getxattr with size of zero (meaning a query of total size);
-    getxattr_size: Option<&'self fn(_ino: fuse_ino_t, _name: &str)
+    getxattr_size: Option<~fn(ino: fuse_ino_t, name: &CString)
                                     -> ErrnoResult<size_t>>,
     // TODO: examine this--ReadReply may not be appropraite here;
-    listxattr: Option<&'self fn(_ino: fuse_ino_t, _size: size_t)
+    listxattr: Option<~fn(ino: fuse_ino_t, size: size_t)
                                 -> ErrnoResult<ReadReply>>,
     // Called on listxattr with size of zero (meaning a query of total size);
-    listxattr_size: Option<&'self fn(_ino: fuse_ino_t) -> ErrnoResult<size_t>>,
-    removexattr: Option<&'self fn(_ino: fuse_ino_t, _name: &str)
+    listxattr_size: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<size_t>>,
+    removexattr: Option<~fn(ino: fuse_ino_t, name: &CString)
                                   -> ErrnoResult<()>>,
-    access: Option<&'self fn(_ino: fuse_ino_t, _mask: c_int)
+    access: Option<~fn(ino: fuse_ino_t, mask: c_int)
                              -> ErrnoResult<()>>,
-    create: Option<&'self fn(_parent: fuse_ino_t, _name: &str, _mode: mode_t,
-                             _flags: c_int) -> ErrnoResult<CreateReply>>,
+    create: Option<~fn(parent: fuse_ino_t, name: &CString,
+                             mode: mode_t, flags: c_int)
+                             -> ErrnoResult<CreateReply>>,
 
     // TODO: The following, still need implementing:
     //
@@ -190,71 +191,270 @@ pub struct FuseLowLevelOps<'self> {
     // flock
 }
 
-/*
- * Run a function with a borrowed pointer to the FuseLowLevelOps struct pointed
- * to by the given userdata pointer.  The "arg" parameter is for passing extra
- * data into the function a la task::spawn_with (needed to push owned pointers
- * into the closure)
- */
-fn userdata_to_ops<T, U>(userdata:*mut c_void, arg:U,
-                         func:&fn(&FuseLowLevelOps, U) -> T) -> T {
-    unsafe {
-        func(*(userdata as *~FuseLowLevelOps), arg)
+/// Options for mounting the file system
+pub struct FuseMountOptions {
+
+    /// This path is used to allow a call to unmount() (or the FuseMount option
+    /// falling out of scope) to cleanly stop the C API thread.  The C API does
+    /// blocking read calls, and the only way to interrupt it is via signals,
+    /// which rust does not support yet.  So when we want to make sure the C
+    /// API wakes up, we read this path, and intercept any attempts to look it
+    /// up to make sure it's not valid.
+    ///
+    /// With the right signal support, this will hopefully become unnecessary.
+    /// Until then, you can at least set this to something else on the off
+    /// chance that the default one would interfere with something.
+    ridiculous_hack_filename: ~str,
+    
+    /// Command line arguments to pass through to the FUSE API.  See the
+    /// `fuse_ll_help` function in the FUSE source for what can go here.
+    args:~[~[u8]]
+}
+impl Default for FuseMountOptions {
+    fn default() -> FuseMountOptions {
+        FuseMountOptions{
+            // The most unlikely filename I could think of is a bunch of
+            // non-printable UTF8.
+            ridiculous_hack_filename: ~"\x01\x02\x03\x04\x05\x06\x07\x08",
+            args: ~[]
+        }
     }
 }
 
+/**
+ * Object representing the mounting of a path via FUSE
+ *
+ * Creating a `FuseMount` mounts the path at `mount_point` via this process
+ * with the functions specified in `ops`.  The path will be mounted for as long
+ * as this object is alive, or until the path is unmounted externally via
+ * `fusermount -u` or `umount`.
+ */
+pub struct FuseMount {
+    // A message appearing here means we're done
+    priv finish_port:Port<TaskResult>,
+    priv mounted:bool,
+    priv session:~FuseSession,
+    priv nocopies: NonCopyable,
+    priv ridiculous_hack_filename: ~str
+}
+impl FuseMount {
+
+    /// Mount the FUSE file system using the functions in `ops`, with options
+    /// (including the mount point) taken from `options.args`.  This function
+    /// will fail if the options are not valid as per FUSE, or if FUSE fails to
+    /// mount.
+    pub fn new(options:~FuseMountOptions, ops:~FuseLowLevelOps)
+           -> ~FuseMount {
+
+        // The C API needs its own OS thread because it will block.  We want to
+        // run all of the filesystem commands we get in "parallel" on their own
+        // rust tasks, but we don't want to spawn a new OS thread for each of
+        // them.  So instead, we have this: the C API gets its own task on its
+        // own OS thread, and does nothing but send commands through a chan to
+        // the dispatch task.  The dispatch task is running on the same
+        // scheduler as the task calling `FuseMount::new`.  Its job is to
+        // receive commands and start a task (again on the default scheduler)
+        // in which to run each one.
+
+        let FuseMountOptions{args:args, ridiculous_hack_filename:hackname} =
+            *options;
+
+        let (dispatch_port, dispatch_chan) = stream::<~FSOperation>();
+        let (finish_port, finish_chan) = stream::<TaskResult>();
+        // This is how we get the session pointer out of the C API thread,
+        // so that we can use it to end the session later.
+        let (session_port, session_chan) = 
+            oneshot::<~FuseSession>();
+
+        // Spawn the C API task
+        let mut c_api_task = task();
+        c_api_task.sched_mode(SingleThreaded);
+        c_api_task.linked();
+        c_api_task.name(format!("FUSE C API - {:?}",
+                                args.map(|v| str::from_utf8(*v))));
+        c_api_task.opts.notify_chan = Some(finish_chan);
+        let userdata = ~FuseUserData{
+            args: args, 
+            ops:ops,
+            dispatch_chan:dispatch_chan,
+            ridiculous_hack_filename: hackname.clone()};
+        c_api_task.spawn_with(
+            (session_chan, userdata),
+            |(schan, userdata)| c_api_loop(schan, userdata));
+        
+        // Receive the session.  The C API task will either send it or fail
+        // (and if it fails, we fail with it, thanks to linked failure.)
+        let session = session_port.recv();
+
+        // Spawn the dispatch task
+        let mut dispatch_task = task();
+        c_api_task.sched_mode(DefaultScheduler);
+        dispatch_task.linked();
+        dispatch_task.name(format!("FUSE dispatch - {:s}",
+                                   session.mount_point.to_str()));
+        do dispatch_task.spawn_with(dispatch_port) |dispatch_port| {
+            'dispatch: loop {
+                // try_recv won't deschedule if the port is closed, so
+                // we need to explicitly do this
+                task::deschedule();
+                match dispatch_port.try_recv() {
+                    Some(fsop) => {
+                        do task().spawn_with(fsop) |fsop| {
+                            let req = fsop.req;
+                            let result = do task::try {
+                                (fsop.operation_fn)(req)
+                            };
+                            if result.is_err() {
+                                reply_failure_err(req);
+                            }
+                        };
+                    },
+                    None => break 'dispatch
+                };
+            }
+            debug!("done with dispatch");
+        }
+
+        ~FuseMount{
+            finish_port: finish_port,
+            mounted: true,
+            session:session,
+            nocopies: NonCopyable::new(),
+            ridiculous_hack_filename: hackname
+        }
+    }
+
+    /// Return true if the filesystem is still mounted, false if not. It could
+    /// be unmounted while the object is still alive if something external
+    /// unmounted it, or from a call to `unmount`.
+    pub fn is_mounted(&self) -> bool {
+        self.mounted && !self.finish_port.peek()
+    }
+
+    /// Block until the filesystem is unmounted
+    pub fn finish(&mut self) {
+        if self.mounted {
+            debug!("Waiting to finish mount of %s",
+                   self.mount_point().to_str());
+            self.finish_port.recv();
+            debug!("Mount finished: %s",
+                   self.mount_point().to_str());
+            self.mounted = false;
+        }
+    }
+
+    /// Unmount the file system
+    #[fixed_stack_segment]
+    pub fn unmount(&mut self) {
+        if self.mounted {
+            debug!("Unmounting %s", self.mount_point().to_str());
+            unsafe {
+                fuse_session_exit(self.session.session);
+                // At this point the C thread could be doing a blocking read
+                // and won't wake up just because fuse_session_exit was called.
+                // So, read the "ridiculous hack" filename just to wake it up!
+                let hack_path = self.mount_point().push(
+                    self.ridiculous_hack_filename);
+                do task::try {
+                    ::std::rt::io::file::stat(&hack_path);
+                };
+            }
+            self.finish();
+        }
+    }
+
+    pub fn mount_point<'a>(&'a self) -> &'a PosixPath {
+        &self.session.mount_point
+    }
+}
+impl Drop for FuseMount {
+    fn drop(&mut self) {
+        debug!("Destroying mounter for %s", self.mount_point().to_str());
+        self.unmount();
+    }
+}
+
+// The FUSE userdata pointer will point to one of these.  The c extern fns
+// use it to get back into the correct corresponding rust tasks.
+struct FuseUserData {
+    ops: ~FuseLowLevelOps,
+    args: ~[~[u8]],
+    // Send FS command functions through here to be dispatched to new tasks on
+    // the right scheduler
+    dispatch_chan:Chan<~FSOperation>,
+    ridiculous_hack_filename: ~str
+}
+
+struct FSOperation {
+    operation_fn: ~fn(fuse_req_t),
+    req: fuse_req_t
+}
+
+struct FuseSession {
+    session: *mut Struct_fuse_session,
+    fuse_chan: *mut Struct_fuse_chan,
+    mount_point: PosixPath
+}
+
+fn cstr_as_bytes_no_term<'a>(cs:&'a CString) -> &'a[u8] {
+    let ab = cs.as_bytes();
+    ab.slice_to(cmp::max(ab.len()-1,0))
+}
+
 #[fixed_stack_segment]
-pub fn fuse_main(args:~[~str], ops:~FuseLowLevelOps) {
+pub fn c_api_loop(session_chan: ChanOne<~FuseSession>, 
+                  userdata:~FuseUserData) {
     unsafe {
-        let arg_c_strs_ptrs: ~[*c_schar] =
-            args.map(|s| s.to_c_str().unwrap() );
+        let args = &(userdata.args);
+        let args_c_strs = args.map(|vec| vec.to_c_str());
+        let args_ptrs = args_c_strs.map(|cstr| cstr.with_ref(|ptr| ptr));
         let mut fuse_args = Struct_fuse_args {
-            argv: transmute(vec::raw::to_ptr(arg_c_strs_ptrs)),
+            argv: transmute(vec::raw::to_ptr(args_ptrs)),
             argc: args.len() as c_int,
             allocated: 0
         };
-        let mut mountpoint:*mut c_schar = ptr::mut_null();
+
+        let mut mount_point:*mut c_schar = ptr::mut_null();
         if fuse_parse_cmdline(ptr::to_mut_unsafe_ptr(&mut fuse_args),
-                              ptr::to_mut_unsafe_ptr(&mut mountpoint),
+                              ptr::to_mut_unsafe_ptr(&mut mount_point),
                               ptr::mut_null(), // multithreaded--we ignore
                               ptr::mut_null() // foreground--ignore (for now)
                               ) == -1 {
-            return;
+            fail!("Invalid command line options");
         }
 
-        let fuse_chan = fuse_mount(mountpoint as *c_schar,
+        // The fuse_chan here is a FUSE C API object, not to be confused
+        // with a rust stream's "chan"
+        let fuse_chan = fuse_mount(mount_point as *c_schar,
                                    ptr::to_mut_unsafe_ptr(&mut fuse_args));
         if fuse_chan == ptr::mut_null() {
-            // TODO: better error message?
-            stderr().write_line("Failed to mount\n");
-            fail!();
+            fail!("Failed to mount");
         }
 
-        let llo = make_fuse_ll_oper(ops);
-        let fuse_session =
-            fuse_lowlevel_new(ptr::to_mut_unsafe_ptr(&mut fuse_args),
-                              ptr::to_unsafe_ptr(&llo),
-                              size_of::<Struct_fuse_lowlevel_ops>() as size_t,
-                              ptr::to_unsafe_ptr(&ops) as *mut c_void);
+        let llo = make_fuse_ll_oper(userdata.ops);
+        let fuse_session = fuse_lowlevel_new(
+            ptr::to_mut_unsafe_ptr(&mut fuse_args),
+            ptr::to_unsafe_ptr(&llo),
+            size_of::<Struct_fuse_lowlevel_ops>() as size_t,
+            ptr::to_unsafe_ptr(&userdata) as *mut c_void);
         if fuse_session == ptr::mut_null() {
-            // TODO: better error message?
-            stderr().write_line("Failed to create FUSE session\n");
-            fail!();
+            fail!("Failed to create FUSE session");
         }
-
-        if fuse_set_signal_handlers(fuse_session) == -1 {
-            stderr().write_line("Failed to set FUSE signal handlers");
-            fail!();
-        }
+        let mountpoint_cstr = CString::new(mount_point as *c_schar,false);
+        let mountpoint_str = str::from_utf8(
+            cstr_as_bytes_no_term(&mountpoint_cstr));
+        session_chan.send(~FuseSession{session:fuse_session,
+                                       mount_point:PosixPath(mountpoint_str),
+                                       fuse_chan: fuse_chan});
 
         fuse_session_add_chan(fuse_session, fuse_chan);
         fuse_session_loop(fuse_session);
-        fuse_remove_signal_handlers(fuse_session);
+        debug!("Done with C API fuse session");
         fuse_session_remove_chan(fuse_chan);
 
         fuse_session_destroy(fuse_session);
-        fuse_unmount(mountpoint as *c_schar, fuse_chan);
-        fuse_opt_free_args(ptr::to_mut_unsafe_ptr(&mut fuse_args));
+        fuse_unmount(mount_point as *c_schar, fuse_chan);
+        debug!("Done with C API fn");
     };
 }
 
@@ -306,6 +506,32 @@ pub fn make_fuse_ll_oper(ops:&FuseLowLevelOps)
     }
 }
 
+#[fixed_stack_segment]
+fn userdata_ptr_from_req(req:fuse_req_t) -> *mut c_void {
+    unsafe {
+        fuse_req_userdata(req)
+    }
+}
+
+/*
+ * Run a function with a borrowed pointer to the FuseLowLevelOps struct pointed
+ * to by the given userdata pointer.  The "arg" parameter is for passing extra
+ * data into the function a la task::spawn_with (needed to push owned pointers
+ * into the closure)
+ */
+fn userdata_from_ptr<T, U>(userdata_ptr:*mut c_void, arg:T,
+                         func:&fn(&FuseUserData, T) -> U) -> U {
+    unsafe {
+        func(*(userdata_ptr as *~FuseUserData), arg)
+    }
+}
+
+fn get_fuse_userdata<T, U>(req:fuse_req_t, arg:T,
+                           func:&fn(&FuseUserData, T) -> U) -> U {
+    let userdata = userdata_ptr_from_req(req);
+    userdata_from_ptr(userdata, arg, func)
+}
+
 type ReplySuccessFn<T> = ~fn(req:fuse_req_t, reply:T);
 
 #[fixed_stack_segment]
@@ -317,31 +543,30 @@ fn send_fuse_reply<T>(result:ErrnoResult<T>, req:fuse_req_t,
     };
 }
 
-fn run_for_reply<T>(req:fuse_req_t, reply_success:ReplySuccessFn<T>,
-                    do_op:~fn(&FuseLowLevelOps) -> ErrnoResult<T>) {
-    #[fixed_stack_segment]
-    unsafe fn call_fuse_req_userdata(req:fuse_req_t) -> *mut c_void {
-        fuse_req_userdata(req)
-    }
-    let mut task = task();
-    task.sched_mode(SingleThreaded);
-    task.supervised();
-    do task.spawn_with((reply_success, do_op)) |(reply_success, do_op)| {
-        unsafe {
-            do userdata_to_ops(call_fuse_req_userdata(req), reply_success)
-                |ops, reply_success| {
-                send_fuse_reply(do_op(ops), req, reply_success)
-            }
-        }
+fn send_to_dispatch<T:Send>(req:fuse_req_t, arg:T, 
+                       blk:~fn(&FuseUserData, T)) {
+    // Toss use this to pass ownedship of arg and blk deep into the nested
+    // closures...
+    do get_fuse_userdata(req, (arg, blk)) |userdata, (arg, blk)| {
+        let c = Cell::new((arg, blk));
+        userdata.dispatch_chan.send(~FSOperation{
+            operation_fn: |req| {
+                    do get_fuse_userdata(req, ()) 
+                        |userdata, ()| {
+                        let (arg, blk) = c.take();
+                        blk(userdata, arg);
+                    }
+                },
+                req: req
+            });
     }
 }
 
-#[inline]
-fn cptr_to_str<T>(cptr:*c_schar, func:&fn(&str) -> T) -> T {
-    unsafe {
-        let cstr = CString::new(cptr,false);
-        func(str::from_utf8_slice(
-                cstr.as_bytes()).trim_right_chars(&(0u8 as char)))
+fn run_for_reply<T>(req:fuse_req_t, reply_success:ReplySuccessFn<T>,
+                    do_op:~fn(&FuseLowLevelOps) -> ErrnoResult<T>) {
+    do send_to_dispatch(req, (do_op, reply_success))
+        |userdata, (do_op, reply_success)| {
+        send_fuse_reply(do_op(&(*userdata.ops)), req, reply_success);
     }
 }
 
@@ -383,12 +608,20 @@ fn reply_zero_err(req: fuse_req_t, _arg:()) {
     }
 }
 
+#[fixed_stack_segment]
+fn reply_failure_err(req:fuse_req_t)
+{
+    unsafe {
+        fuse_reply_err(req, EIO);
+    }
+}
+
 fn openreply_to_fileinfo(reply: OpenReply) -> Struct_fuse_file_info {
     Struct_fuse_file_info{
         direct_io: to_bit(reply.direct_io) as c_uint,
         keep_cache: to_bit(reply.keep_cache) as c_uint,
         fh: reply.fh,
-        ..zero()
+        ..Default::default()
     }
 }
 
@@ -433,7 +666,8 @@ fn reply_readdir(req: fuse_req_t, tuple: (size_t, ReaddirReply)) {
             // of the length of the name, but this should be enough for
             // what's needed
             static EXTRA_CAP_PER_ENTRY:size_t = 32;
-            let mut lengths = entries.iter().map(|x| x.name.len() as size_t);
+            let mut lengths = entries.iter().map(|x| x.name.as_bytes().len()
+                                                 as size_t);
             let max_buf_size = lengths.sum() +
                 (entries.len() as size_t*EXTRA_CAP_PER_ENTRY);
             let buf_size = cmp::min(max_buf_size, size);
@@ -445,9 +679,8 @@ fn reply_readdir(req: fuse_req_t, tuple: (size_t, ReaddirReply)) {
                     let buf_ptr = ptr::mut_offset(vec::raw::to_mut_ptr(buf),
                                                   returned_size as int);
                     let remaining_size = buf_size - returned_size;
-                    let entry_name_c = entry.name.to_c_str();
-                    let added_size = do entry_name_c.with_ref |name_cstr| {
-                        let stbuf = stat{
+                    let added_size = do entry.name.with_ref |name_cstr| {
+                        let stbuf = libc::stat{
                             st_mode: entry.mode,
                             st_ino: entry.ino,
                             ..default_stat()
@@ -493,21 +726,21 @@ fn reply_xattr(req: fuse_req_t, size: size_t) {
     }
 }
 
-fn handle_unimpl<F, T>(opt:&Option<F>, name:&str,
+fn handle_unimpl<F, T>(opt:&Option<F>, name:&str, 
                        imp:&fn(&F) -> ErrnoResult<T>) -> ErrnoResult<T> {
     match *opt {
         Some(ref f) => imp(f),
         None => {
-            error!("FUSE called a callback %s, but there was no fn supplied. This should never happen.",
+            error!("FUSE called %s, but there was no fn supplied.  This is a bug in rust_fuse.",
                    name);
-            Err(ENOSYS)
+            Err(libc::ENOSYS)
         }
     }
 }
 
 extern fn init_impl(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
-    do userdata_to_ops(userdata, ()) |ops, _| {
-        match ops.init {
+    do userdata_from_ptr(userdata, ()) |userdata, _| {
+        match userdata.ops.init {
             Some(ref f) => (*f)(),
             None=>()
         }
@@ -515,8 +748,8 @@ extern fn init_impl(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
 }
 
 extern fn destroy_impl(userdata:*mut c_void) {
-    do userdata_to_ops(userdata, ()) |ops, _| {
-        match ops.destroy {
+    do userdata_from_ptr(userdata, ()) |userdata, _| {
+        match userdata.ops.destroy {
             Some(ref f) => (*f)(),
             None=>()
         }
@@ -526,17 +759,26 @@ extern fn destroy_impl(userdata:*mut c_void) {
 macro_rules! run_for_reply_if_impl {
     ($opfunc:ident, $replyfunc:expr, $body:block) => (
         do run_for_reply(req, $replyfunc) |ops| {
-            do handle_unimpl(&ops.$opfunc,stringify!($opfunc)) |f|
+            do handle_unimpl(&ops.$opfunc, stringify!($opfunc)) |f|
                 $body
         })
 }
 
 extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
-    run_for_reply_if_impl!(lookup, reply_entryparam, {
-            do cptr_to_str(name) |name| {
-                (*f)(parent, name)
+    do send_to_dispatch(req, ()) |userdata, ()| {
+        unsafe { 
+            let name_cstr = CString::new(name, false);
+            if (cstr_as_bytes_no_term(&name_cstr) == 
+                userdata.ridiculous_hack_filename.as_bytes()) {
+                reply_failure_err(req);
+            } else {
+                let result = do handle_unimpl(&userdata.ops.lookup, "lookup") |f| {
+                    (*f)(parent, &CString::new(name,false))
+                };
+                send_fuse_reply(result, req, reply_entryparam);
             }
-        })
+        }
+    }
 }
 
 extern fn forget_impl(req: fuse_req_t, ino: fuse_ino_t, nlookup:c_ulong) {
@@ -552,7 +794,7 @@ extern fn getattr_impl(req:fuse_req_t, ino: fuse_ino_t,
         })
 }
 
-extern fn setattr_impl(req: fuse_req_t, ino: fuse_ino_t, attr:*stat,
+extern fn setattr_impl(req: fuse_req_t, ino: fuse_ino_t, attr:*libc::stat,
                        to_set: int, fi: *Struct_fuse_file_info) {
     static FUSE_SET_ATTR_MODE:int = (1 << 0);
     static FUSE_SET_ATTR_UID:int = (1 << 1);
@@ -604,36 +846,35 @@ extern fn readlink_impl(req: fuse_req_t, ino: fuse_ino_t) {
 extern fn mknod_impl(req:fuse_req_t, parent: fuse_ino_t, name:*c_schar,
                      mode: mode_t, rdev: dev_t) {
     run_for_reply_if_impl!(mknod, reply_entryparam, {
-            do cptr_to_str(name) |name| { (*f)(parent, name, mode, rdev) }
+            unsafe { (*f)(parent, &CString::new(name,false), mode, rdev) }
         })
 }
 
 extern fn mkdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar,
                      mode:mode_t) {
     run_for_reply_if_impl!(mkdir, reply_entryparam, {
-            do cptr_to_str(name) |name| { (*f)(parent, name, mode) }
+            unsafe { (*f)(parent, &CString::new(name,false), mode) }
         })
 }
 
 extern fn unlink_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
     run_for_reply_if_impl!(unlink, reply_zero_err, {
-            do cptr_to_str(name) |name| { (*f)(parent, name) }
+            unsafe { (*f)(parent, &CString::new(name,false)) }
         })
 }
 
 extern fn rmdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
     run_for_reply_if_impl!(rmdir, reply_zero_err, {
-            do cptr_to_str(name) |name| { (*f)(parent, name) }
+            unsafe { (*f)(parent, &CString::new(name,false)) }
         })
 }
 
 extern fn symlink_impl(req: fuse_req_t, link: *c_schar, parent: fuse_ino_t,
                        name: *c_schar) {
     run_for_reply_if_impl!(symlink, reply_entryparam, {
-            do cptr_to_str(link) |link| {
-                do cptr_to_str(name) |name| {
-                    (*f)(link, parent, name)
-                }
+            unsafe {
+                (*f)(&CString::new(link,false), parent, 
+                     &CString::new(name,false))
             }
         })
 }
@@ -641,10 +882,9 @@ extern fn symlink_impl(req: fuse_req_t, link: *c_schar, parent: fuse_ino_t,
 extern fn rename_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar,
                       newparent: fuse_ino_t, newname: *c_schar) {
     run_for_reply_if_impl!(rename, reply_zero_err, {
-            do cptr_to_str(name) |name| {
-                do cptr_to_str(newname) |newname| {
-                    (*f)(parent, name, newparent,newname)
-                }
+            unsafe {
+                (*f)(parent, &CString::new(name,false), newparent,
+                     &CString::new(newname,false))
             }
         })
 }
@@ -652,8 +892,8 @@ extern fn rename_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar,
 extern fn link_impl(req: fuse_req_t, ino: fuse_ino_t, newparent: fuse_ino_t,
                     newname: *c_schar) {
     run_for_reply_if_impl!(link, reply_entryparam, {
-            do cptr_to_str(newname) |newname| {
-                (*f)(ino, newparent, newname)
+            unsafe {
+                (*f)(ino, newparent, &CString::new(newname,false))
             }
         })
 }
@@ -726,7 +966,7 @@ extern fn readdir_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t,
     run_for_reply_if_impl!(readdir, reply_readdir, {
             unsafe {
                 (*f)(ino, size, off, (*fi).fh)
-            }.chain(|rr| Ok((size, rr)))
+            }.and_then(|rr| Ok((size, rr)))
         })
 }
 
@@ -759,9 +999,7 @@ extern fn setxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
     run_for_reply_if_impl!(setxattr, reply_zero_err, {
             unsafe {
                 do vec::raw::buf_as_slice(value, size as uint) |vec| {
-                    do cptr_to_str(name) |name| {
-                        (*f)(ino, name, vec, flags)
-                    }
+                    (*f)(ino, &CString::new(name,false), vec, flags)
                 }
             }
         })
@@ -771,11 +1009,11 @@ extern fn getxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
                         size: size_t) {
     if size == 0 {
         run_for_reply_if_impl!(getxattr_size, reply_xattr, {
-                do cptr_to_str(name) |name| { (*f)(ino, name) }
+                unsafe { (*f)(ino, &CString::new(name,false)) }
             })
     } else {
         run_for_reply_if_impl!(getxattr, reply_read, {
-                do cptr_to_str(name) |name| { (*f)(ino, name, size) }
+                unsafe { (*f)(ino, &CString::new(name,false), size) }
             })
     }
 }
@@ -794,7 +1032,7 @@ extern fn listxattr_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t) {
 
 extern fn removexattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar) {
     run_for_reply_if_impl!(removexattr, reply_zero_err, {
-            do cptr_to_str(name) |name| { (*f)(ino, name) }
+            unsafe { (*f)(ino, &CString::new(name,false)) }
         })
 }
 
@@ -809,9 +1047,7 @@ extern fn create_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar,
                       mode: mode_t, fi: *Struct_fuse_file_info) {
     run_for_reply_if_impl!(create, reply_create, {
             unsafe {
-                do cptr_to_str(name) |name| {
-                    (*f)(parent, name, mode, (*fi).flags)
-                }
+                (*f)(parent, &CString::new(name,false), mode, (*fi).flags)
             }
         })
 }

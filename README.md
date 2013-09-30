@@ -20,6 +20,7 @@ The modules:
   * `rust_fuse::ffi` - The actual C headers, translated to rust extern fns.  Not meant for direct use.
   * `rust_fuse::lowlevel` - This is a "thin" rust wrapper over the FUSE low level C API.  The goals:
     * Eliminate the need for a user of this library to use unsafe code.  That means converting all raw pointers to vectors, borrowed pointers, etc as appropriate.
+    * Pass only meaningful data to a user of this library.  The C API has many places where it will pass you a big struct, then tell you in its documentation that only certain fields are meaningful.  We change the data structures in those cases so that you the filesystem implementor gets only real information, not random garbage.
     * Use rust's task system to:
       * Run each filesystem request in its own task to allow them to run in parallel.
       * Guarantee that each "request" call receives an appropriate reply, without having to track it yourself.
