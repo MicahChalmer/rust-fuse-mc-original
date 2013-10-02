@@ -355,7 +355,7 @@ impl FuseMount {
                 // So, read the "ridiculous hack" filename just to wake it up!
                 let hack_path = self.mount_point().push(
                     self.ridiculous_hack_filename);
-                do task::try {
+                do ::std::rt::io::ignore_io_error {
                     ::std::rt::io::file::stat(&hack_path);
                 };
             }
