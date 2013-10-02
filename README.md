@@ -1,6 +1,6 @@
-# FUSE (Filesystem In Userspace) Bindings for Rust
+# FUSE Bindings for Rust
 
-This is an interface to write a [FUSE](http://fuse.sourceforge.net/) filesystem in [rust](http://www.rust-lang.org/).
+This is an interface to write a [FUSE (Filesystem In Userspace)](http://fuse.sourceforge.net/) filesystem in [rust](http://www.rust-lang.org/).
 
 # WARNINGS
 
@@ -36,8 +36,8 @@ There are some problems with it as it exists now:
 
 ## TEMPORARY WORKAROUNDS FOR KNOWN RUST ISSUES
 
-  * Signals are not handled.   Someone is working on adding the ability to handle signals to rust in mozilla/rust#9318.  Until then...nada.  Use "fusermount" outside the process to unmount--interrupting a running process written with this will not unmount it cleanly.
-  * Due to the aforementioned lack of signal handling, there is no way to wake up the C API thread properly (the only way supported by the FUSE library is with a signal.)  There is a ridiculous hack in place to get around it involving having one specific name unusable within the FS, and using it as a signal instead.
+  * Signals are not handled.   Someone is working on adding the ability to handle signals to rust ([#9318](https://github.com/mozilla/rust/pull/9318)).  Until then...nada.  Use "fusermount" outside the process to unmount--interrupting a running process written with this will not unmount it cleanly.
+  * Due to the aforementioned lack of signal handling, there is no way to wake up the C API thread properly (the only way supported by the FUSE library is with a signal.)  So to unmount, we have to actually shell out to an external process, which is just plain bad.  (You need to have `fusermount` (on linux) or `umount` (on OS X) in your `$PATH`.)
 
 # MISSING PIECES
 
@@ -76,3 +76,7 @@ $ fusermount -u /tmp/hello_fs
 ````
 
 I'm working off the `master` branch of rust.  I try to make sure what I push to github works with what was in rust's master at or near the time that I pushed it.
+
+# RUNNING THE TESTS
+
+The test suite lives in `src/test`, which means you can run it with `rustpkg test test`.

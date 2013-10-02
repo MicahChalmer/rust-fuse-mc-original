@@ -30,8 +30,8 @@ use super::stat::stat::arch::default_stat;
 use std::libc;
 use std::util::NonCopyable;
 use std::cell::Cell;
-use std::comm::{oneshot, ChanOne};
 use std::str;
+use std::rt::io::process::{Process, ProcessConfig, Ignored};
 
 pub use ffi::{fuse_ino_t,Struct_fuse_entry_param};
 
@@ -193,19 +193,6 @@ pub struct FuseLowLevelOps {
 
 /// Options for mounting the file system
 pub struct FuseMountOptions {
-
-    /// This path is used to allow a call to unmount() (or the FuseMount option
-    /// falling out of scope) to cleanly stop the C API thread.  The C API does
-    /// blocking read calls, and the only way to interrupt it is via signals,
-    /// which rust does not support yet.  So when we want to make sure the C
-    /// API wakes up, we read this path, and intercept any attempts to look it
-    /// up to make sure it's not valid.
-    ///
-    /// With the right signal support, this will hopefully become unnecessary.
-    /// Until then, you can at least set this to something else on the off
-    /// chance that the default one would interfere with something.
-    ridiculous_hack_filename: ~str,
-    
     /// Command line arguments to pass through to the FUSE API.  See the
     /// `fuse_ll_help` function in the FUSE source for what can go here.
     args:~[~[u8]]
@@ -213,9 +200,6 @@ pub struct FuseMountOptions {
 impl Default for FuseMountOptions {
     fn default() -> FuseMountOptions {
         FuseMountOptions{
-            // The most unlikely filename I could think of is a bunch of
-            // non-printable UTF8.
-            ridiculous_hack_filename: ~"\x01\x02\x03\x04\x05\x06\x07\x08",
             args: ~[]
         }
     }
@@ -234,8 +218,7 @@ pub struct FuseMount {
     priv finish_port:Port<TaskResult>,
     priv mounted:bool,
     priv session:~FuseSession,
-    priv nocopies: NonCopyable,
-    priv ridiculous_hack_filename: ~str
+    priv nocopies: NonCopyable
 }
 impl FuseMount {
 
@@ -256,15 +239,14 @@ impl FuseMount {
         // receive commands and start a task (again on the default scheduler)
         // in which to run each one.
 
-        let FuseMountOptions{args:args, ridiculous_hack_filename:hackname} =
-            *options;
+        let FuseMountOptions{args:args} = *options;
 
         let (dispatch_port, dispatch_chan) = stream::<~FSOperation>();
         let (finish_port, finish_chan) = stream::<TaskResult>();
         // This is how we get the session pointer out of the C API thread,
         // so that we can use it to end the session later.
         let (session_port, session_chan) = 
-            oneshot::<~FuseSession>();
+            stream::<~FuseSession>();
 
         // Spawn the C API task
         let mut c_api_task = task();
@@ -277,10 +259,10 @@ impl FuseMount {
             args: args, 
             ops:ops,
             dispatch_chan:dispatch_chan,
-            ridiculous_hack_filename: hackname.clone()};
-        c_api_task.spawn_with(
-            (session_chan, userdata),
-            |(schan, userdata)| c_api_loop(schan, userdata));
+            session_chan: session_chan,
+            session: Cell::new_empty()
+        };
+        c_api_task.spawn_with(userdata,c_api_loop);
         
         // Receive the session.  The C API task will either send it or fail
         // (and if it fails, we fail with it, thanks to linked failure.)
@@ -319,8 +301,7 @@ impl FuseMount {
             finish_port: finish_port,
             mounted: true,
             session:session,
-            nocopies: NonCopyable::new(),
-            ridiculous_hack_filename: hackname
+            nocopies: NonCopyable::new()
         }
     }
 
@@ -348,17 +329,9 @@ impl FuseMount {
     pub fn unmount(&mut self) {
         if self.mounted {
             debug!("Unmounting %s", self.mount_point().to_str());
-            unsafe {
-                fuse_session_exit(self.session.session);
-                // At this point the C thread could be doing a blocking read
-                // and won't wake up just because fuse_session_exit was called.
-                // So, read the "ridiculous hack" filename just to wake it up!
-                let hack_path = self.mount_point().push(
-                    self.ridiculous_hack_filename);
-                do ::std::rt::io::ignore_io_error {
-                    ::std::rt::io::file::stat(&hack_path);
-                };
-            }
+            // TODO: once signal handling exists, signal the C API thread
+            // instead of using an external process.
+            unmount_via_external_process(self.mount_point());
             self.finish();
         }
     }
@@ -374,6 +347,36 @@ impl Drop for FuseMount {
     }
 }
 
+#[cfg(target_os = "linux")]
+mod ext_unmount {
+    use std::path::PosixPath;
+    pub static EXT_UNMOUNT_PROG:&'static str = "fusermount";
+    pub fn ext_unmount_args(mount_point:&PosixPath) -> ~[~str] {
+        ~[~"-u", mount_point.to_str()]
+    }
+}
+#[cfg(target_os = "macos")]
+mod ext_unmount {
+    use std::path::PosixPath;
+    pub static EXT_UNMOUNT_PROG:&'static str = "umount";
+    pub fn ext_unmount_args(mount_point:&PosixPath) -> ~[~str] {
+        ~[mount_point.to_str()]
+    }
+}
+
+fn unmount_via_external_process(mount_point:&PosixPath) {
+    let args = self::ext_unmount::ext_unmount_args(mount_point);
+    let io = ~[Ignored, Ignored, Ignored];
+    let cwd = Some("/");
+    let _proc = Process::new(ProcessConfig{
+        program: self::ext_unmount::EXT_UNMOUNT_PROG,
+        args: args,
+        env: None,
+        cwd: cwd,
+        io: io
+    });
+}
+
 // The FUSE userdata pointer will point to one of these.  The c extern fns
 // use it to get back into the correct corresponding rust tasks.
 struct FuseUserData {
@@ -382,7 +385,10 @@ struct FuseUserData {
     // Send FS command functions through here to be dispatched to new tasks on
     // the right scheduler
     dispatch_chan:Chan<~FSOperation>,
-    ridiculous_hack_filename: ~str
+    // During initialization, we need to send the session through the session
+    // chan
+    session:Cell<~FuseSession>,
+    session_chan:Chan<~FuseSession>
 }
 
 struct FSOperation {
@@ -401,8 +407,7 @@ fn cstr_as_bytes_no_term<'a>(cs:&'a CString) -> &'a[u8] {
 }
 
 #[fixed_stack_segment]
-pub fn c_api_loop(session_chan: ChanOne<~FuseSession>, 
-                  userdata:~FuseUserData) {
+pub fn c_api_loop(userdata:~FuseUserData) {
     unsafe {
         let args = &(userdata.args);
         let args_c_strs = args.map(|vec| vec.to_c_str());
@@ -442,8 +447,10 @@ pub fn c_api_loop(session_chan: ChanOne<~FuseSession>,
         let mountpoint_cstr = CString::new(mount_point as *c_schar,false);
         let mountpoint_str = str::from_utf8(
             cstr_as_bytes_no_term(&mountpoint_cstr));
-        session_chan.send(~FuseSession{session:fuse_session,
-                                       mount_point:PosixPath(mountpoint_str)});
+        userdata.session.put_back(~FuseSession{
+                session:fuse_session,
+                mount_point:PosixPath(mountpoint_str)
+            });
 
         fuse_session_add_chan(fuse_session, fuse_chan);
         fuse_session_loop(fuse_session);
@@ -459,8 +466,8 @@ pub fn c_api_loop(session_chan: ChanOne<~FuseSession>,
 pub fn make_fuse_ll_oper(ops:&FuseLowLevelOps)
                          -> Struct_fuse_lowlevel_ops {
     return Struct_fuse_lowlevel_ops {
-        init: ops.init.map(|_| init_impl),
-        destroy: ops.destroy.map(|_| destroy_impl),
+        init: Some(init_impl),
+        destroy: Some(destroy_impl),
         lookup: ops.lookup.map(|_| lookup_impl),
         forget: ops.forget.map(|_| forget_impl),
         getattr: ops.getattr.map(|_| getattr_impl),
@@ -742,6 +749,7 @@ extern fn init_impl(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
             Some(ref f) => (*f)(),
             None=>()
         }
+        userdata.session_chan.send(userdata.session.take());
     }
 }
 
@@ -763,20 +771,9 @@ macro_rules! run_for_reply_if_impl {
 }
 
 extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
-    do send_to_dispatch(req, ()) |userdata, ()| {
-        unsafe { 
-            let name_cstr = CString::new(name, false);
-            if (cstr_as_bytes_no_term(&name_cstr) == 
-                userdata.ridiculous_hack_filename.as_bytes()) {
-                reply_failure_err(req);
-            } else {
-                let result = do handle_unimpl(&userdata.ops.lookup, "lookup") |f| {
-                    (*f)(parent, &CString::new(name,false))
-                };
-                send_fuse_reply(result, req, reply_entryparam);
-            }
-        }
-    }
+    run_for_reply_if_impl!(lookup, reply_entryparam, {
+            unsafe { (*f)(parent, &CString::new(name, false)) }
+        })
 }
 
 extern fn forget_impl(req: fuse_req_t, ino: fuse_ino_t, nlookup:c_ulong) {
