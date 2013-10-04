@@ -32,6 +32,7 @@ use std::util::NonCopyable;
 use std::cell::Cell;
 use std::str;
 use std::rt::io::process::{Process, ProcessConfig, Ignored};
+use extra::arc::Arc;
 
 pub use ffi::{fuse_ino_t,Struct_fuse_entry_param};
 
@@ -90,95 +91,123 @@ pub type EntryReply = Struct_fuse_entry_param;
 pub type ErrnoResult<T> = Result<T, c_int>;
 
 /**
- * Structure of callbacks to pass into fuse_main.
+ * Trait that defines the filesystem.  Override each method to implement the
+ * corresponding filesystem operation.  See the FUSE docs for a description of
+ * each.  The rust_fuse wrapper will run each operation in its own task, so
+ * even though the API is blocking they will run in parallel (subject to rust's
+ * default scheduling.)
  *
- * It would be best if this could be a trait, and a user could just implement
- * the methods as desired, leaving the rest as defaults.  Unfortunately that's
- * not quite possible.  FUSE has default behavior for some ops that can't just
- * be invoked from a callback--the only way to get it is to pass NULL for the
- * callback pointers into the fuse_lowlevel_ops structure.  But we can't know
- * at run time which default methods of a trait were overridden, which means we
- * don't know which entries in the Struct_fuse_lowlevel_ops to null out.
- *
- * Instead, we've got a struct full of optional fns, equivalent to the struct
- * of nullable function pointers in C.  It's the best we can do without some
- * sort of reflection API that rust doesn't have, or a way to call the FUSE
- * default behavior from a callback, which FUSE does not have.
- *
+ * For each operation implemented, it is necessary to also implement the
+ * corresponding _is_implemented method and return true--i.e. if you implement
+ * `lookup` you need to implement `lookup_is_implemented` and so on.  Each
+ * "is_implemented" function is called only once, before the filesystem is
+ * mounted, and if it returns false, the corresponding FS operation method will
+ * not be called, and the FUSE default behavior will be used in its place.
+ * It's a shame that all this is necessary, but rust has no reflection to allow
+ * the wrapper to know which fields of the `fuse_lowlevel_ops` struct to pass
+ * NULL into in the C API.  Passing NULL into the struct is the only way to get
+ * the FUSE default behavior--there is no way to invoke it from a callback.
+ * 
+ * The callbacks get an immutable reference to self, and can be called in
+ * parallel on the same object.
  */
-#[deriving(Default)]
-pub struct FuseLowLevelOps {
-    init: Option<~fn()>,
-    destroy: Option<~fn()>,
-    lookup: Option<~fn(parent: fuse_ino_t, name: &CString)
-                             -> ErrnoResult<EntryReply>>,
-    forget: Option<~fn(ino:fuse_ino_t, nlookup:c_ulong)>,
-    getattr: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<AttrReply>>,
-    setattr: Option<~fn(ino: fuse_ino_t, _attrs_toset:&[AttrToSet],
-                              fh:Option<u64>) -> ErrnoResult<AttrReply>>,
-    readlink: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<~str>>,
-    mknod: Option<~fn(parent: fuse_ino_t, name: &CString, 
-                            mode: mode_t, rdev: dev_t) 
-                            -> ErrnoResult<EntryReply>>,
-    mkdir: Option<~fn(parent: fuse_ino_t, name: &CString,
-                            mode: mode_t) -> ErrnoResult<EntryReply>>,
-    unlink: Option<~fn(parent: fuse_ino_t, name: &CString)
-                             -> ErrnoResult<()>>,
-    rmdir: Option<~fn(parent: fuse_ino_t, name: &CString)
-                            -> ErrnoResult<()>>,
-    symlink: Option<~fn(link:&CString, parent: fuse_ino_t,
-                              name: &CString) -> ErrnoResult<EntryReply>>,
-    rename: Option<~fn(parent: fuse_ino_t, name: &CString,
-                             newparent: fuse_ino_t, newname: &CString)
-                             -> ErrnoResult<()>>,
-    link: Option<~fn(ino: fuse_ino_t, newparent: fuse_ino_t,
-                           newname: &CString) -> ErrnoResult<EntryReply>>,
-    open: Option<~fn(ino: fuse_ino_t, flags: c_int)
-                           -> ErrnoResult<OpenReply>>,
-    read: Option<~fn(ino: fuse_ino_t, size: size_t, off: off_t,
-                           fh: u64) -> ErrnoResult<ReadReply>>,
-    // TODO: is writepage a bool, or an actual number that needs to be;
-    // preserved?;
-    write: Option<~fn(ino: fuse_ino_t, buf:&[u8], off: off_t,
-                            fh: u64, writepage: bool)
-                            -> ErrnoResult<size_t>>,
-    flush: Option<~fn(ino: fuse_ino_t, _lockowner: u64, fh: u64)
-                            -> ErrnoResult<()>>,
-    release: Option<~fn(ino: fuse_ino_t, flags: c_int, fh: u64)
-                              -> ErrnoResult<()>>,
-    fsync: Option<~fn(ino: fuse_ino_t, datasync: bool, fh: u64)
-                            -> ErrnoResult<()>>,
-    opendir: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<OpenReply>>,
-    readdir: Option<~fn(ino: fuse_ino_t, size: size_t, off: off_t,
-                              fh: u64) -> ErrnoResult<ReaddirReply>>,
-    releasedir: Option<~fn(ino: fuse_ino_t, fh: u64)
-                                 -> ErrnoResult<()>>,
-    fsyncdir: Option<~fn(ino: fuse_ino_t, datasync: bool, fh: u64)
-                               -> ErrnoResult<()>>,
-    statfs: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<Struct_statvfs>>,
-    setxattr: Option<~fn(ino: fuse_ino_t, name: &CString,
-                               value: &[u8], flags: c_int)
-                               -> ErrnoResult<()>>,
-    // TODO: examine this--ReadReply may not be appropraite here;
-    getxattr: Option<~fn(ino: fuse_ino_t, name: &CString,
-                               size: size_t) -> ErrnoResult<ReadReply>>,
-    // Called on getxattr with size of zero (meaning a query of total size);
-    getxattr_size: Option<~fn(ino: fuse_ino_t, name: &CString)
-                                    -> ErrnoResult<size_t>>,
-    // TODO: examine this--ReadReply may not be appropraite here;
-    listxattr: Option<~fn(ino: fuse_ino_t, size: size_t)
-                                -> ErrnoResult<ReadReply>>,
-    // Called on listxattr with size of zero (meaning a query of total size);
-    listxattr_size: Option<~fn(ino: fuse_ino_t) -> ErrnoResult<size_t>>,
-    removexattr: Option<~fn(ino: fuse_ino_t, name: &CString)
-                                  -> ErrnoResult<()>>,
-    access: Option<~fn(ino: fuse_ino_t, mask: c_int)
-                             -> ErrnoResult<()>>,
-    create: Option<~fn(parent: fuse_ino_t, name: &CString,
-                             mode: mode_t, flags: c_int)
-                             -> ErrnoResult<CreateReply>>,
+pub trait FuseLowLevelOps {
+    /// Called when the file system is mounted and ready.
+    fn init(&self) { }
+    // Called when the file system has been unmounted.
+    fn destroy(&self) { }
 
-    // TODO: The following, still need implementing:
+    fn lookup(&self, _parent: fuse_ino_t, _name: &CString)
+              -> ErrnoResult<EntryReply> { fail!() }
+    fn lookup_is_implemented(&self) -> bool { false }
+    fn forget(&self, _ino:fuse_ino_t, _nlookup:c_ulong) { fail!() }
+    fn forget_is_implemented(&self) -> bool { false }
+    fn getattr(&self, _ino: fuse_ino_t) -> ErrnoResult<AttrReply> { fail!() }
+    fn getattr_is_implemented(&self) -> bool { false }
+    fn setattr(&self, _ino: fuse_ino_t, __attrs_toset:&[AttrToSet], _fh:Option<u64>)
+               -> ErrnoResult<AttrReply> { fail!() }
+    fn setattr_is_implemented(&self) -> bool { false }
+    fn readlink(&self, _ino: fuse_ino_t) -> ErrnoResult<~str> { fail!() }
+    fn readlink_is_implemented(&self) -> bool { false }
+    fn mknod(&self, _parent: fuse_ino_t, _name: &CString, _mode: mode_t, _rdev: dev_t) 
+             -> ErrnoResult<EntryReply> { fail!() }
+    fn mknod_is_implemented(&self) -> bool { false }
+    fn mkdir(&self, _parent: fuse_ino_t, _name: &CString, _mode: mode_t)
+             -> ErrnoResult<EntryReply> { fail!() }
+    fn mkdir_is_implemented(&self) -> bool { false }
+    fn unlink(&self, _parent: fuse_ino_t, _name: &CString)
+              -> ErrnoResult<()> { fail!() }
+    fn unlink_is_implemented(&self) -> bool { false }
+    fn rmdir(&self, _parent: fuse_ino_t, _name: &CString) -> ErrnoResult<()> { fail!() }
+    fn rmdir_is_implemented(&self) -> bool { false }
+    fn symlink(&self, _link:&CString, _parent: fuse_ino_t, _name: &CString)
+               -> ErrnoResult<EntryReply> { fail!() }
+    fn symlink_is_implemented(&self) -> bool { false }
+    fn rename(&self, _parent: fuse_ino_t, _name: &CString, _newparent: fuse_ino_t, 
+              _newname: &CString) -> ErrnoResult<()> { fail!() }
+    fn rename_is_implemented(&self) -> bool { false }
+    fn link(&self, _ino: fuse_ino_t, _newparent: fuse_ino_t, _newname: &CString)
+            -> ErrnoResult<EntryReply> { fail!() }
+    fn link_is_implemented(&self) -> bool { false }
+    fn open(&self, _ino: fuse_ino_t, _flags: c_int)
+            -> ErrnoResult<OpenReply> { fail!() }
+    fn open_is_implemented(&self) -> bool { false }
+    fn read(&self, _ino: fuse_ino_t, _size: size_t, _off: off_t, _fh: u64)
+            -> ErrnoResult<ReadReply> { fail!() }
+    fn read_is_implemented(&self) -> bool { false }
+    // _TODO: is writepage a bool, or an actual number that needs to be
+    // preserved?
+    fn write(&self, _ino: fuse_ino_t, _buf:&[u8], _off: off_t, _fh: u64, _writepage: bool)
+             -> ErrnoResult<size_t> { fail!() }
+    fn write_is_implemented(&self) -> bool { false }
+    fn flush(&self, _ino: fuse_ino_t, __lockowner: u64, _fh: u64)
+             -> ErrnoResult<()> { fail!() }
+    fn flush_is_implemented(&self) -> bool { false }
+    fn release(&self, _ino: fuse_ino_t, _flags: c_int, _fh: u64)
+               -> ErrnoResult<()> { fail!() }
+    fn release_is_implemented(&self) -> bool { false }
+    fn fsync(&self, _ino: fuse_ino_t, _datasync: bool, _fh: u64)
+             -> ErrnoResult<()> { fail!() }
+    fn fsync_is_implemented(&self) -> bool { false }
+    fn opendir(&self, _ino: fuse_ino_t)
+               -> ErrnoResult<OpenReply> { fail!() }
+    fn opendir_is_implemented(&self) -> bool { false }
+    fn readdir(&self, _ino: fuse_ino_t, _size: size_t, _off: off_t, _fh: u64)
+               -> ErrnoResult<ReaddirReply> { fail!() }
+    fn readdir_is_implemented(&self) -> bool { false }
+    fn releasedir(&self, _ino: fuse_ino_t, _fh: u64)
+                  -> ErrnoResult<()> { fail!() }
+    fn releasedir_is_implemented(&self) -> bool { false }
+    fn fsyncdir(&self, _ino: fuse_ino_t, _datasync: bool, _fh: u64)
+                -> ErrnoResult<()> { fail!() }
+    fn fsyncdir_is_implemented(&self) -> bool { false }
+    fn statfs(&self, _ino: fuse_ino_t) -> ErrnoResult<Struct_statvfs> { fail!() }
+    fn statfs_is_implemented(&self) -> bool { false }
+    fn setxattr(&self, _ino: fuse_ino_t, _name: &CString, _value: &[u8], _flags: c_int)
+                -> ErrnoResult<()> { fail!() }
+    fn setxattr_is_implemented(&self) -> bool { false }
+    // _TODO: examine this--ReadReply may not be appropraite here
+    fn getxattr(&self, _ino: fuse_ino_t, _name: &CString, _size: size_t)
+                -> ErrnoResult<ReadReply> { fail!() }
+    // Called on getxattr with size of zero (meaning a query of total size)
+    fn getxattr_size(&self, _ino: fuse_ino_t, _name: &CString)
+                     -> ErrnoResult<size_t>{ fail!() }
+    fn getxattr_is_implemented(&self) -> bool { false }
+    // _TODO: examine this--ReadReply may not be appropraite here
+    fn listxattr(&self, _ino: fuse_ino_t, _size: size_t)
+                 -> ErrnoResult<ReadReply> { fail!() }
+    // Called on listxattr with size of zero (meaning a query of total size)
+    fn listxattr_size(&self, _ino: fuse_ino_t) -> ErrnoResult<size_t> { fail!() }
+    fn listxattr_is_implemented(&self) -> bool { false }
+    fn removexattr(&self, _ino: fuse_ino_t, _name: &CString) 
+                   -> ErrnoResult<()> { fail!() }
+    fn removexattr_is_implemented(&self) -> bool { false }
+    fn access(&self, _ino: fuse_ino_t, _mask: c_int) -> ErrnoResult<()> { fail!() }
+    fn access_is_implemented(&self) -> bool { false }
+    fn create(&self, _parent: fuse_ino_t, _name: &CString, _mode: mode_t, _flags: c_int)
+              -> ErrnoResult<CreateReply> { fail!() }
+    fn create_is_implemented(&self) -> bool { false }
+    // _TODO: The following, still need _implementing:
     //
     // getlk
     // setlk
@@ -190,6 +219,7 @@ pub struct FuseLowLevelOps {
     // forget_multi
     // flock
 }
+
 
 /// Options for mounting the file system
 pub struct FuseMountOptions {
@@ -226,11 +256,10 @@ impl FuseMount {
     /// (including the mount point) taken from `options.args`.  This function
     /// will fail if the options are not valid as per FUSE, or if FUSE fails to
     /// mount.
-    pub fn new(options:~FuseMountOptions, ops:~FuseLowLevelOps)
-           -> ~FuseMount {
-
+    pub fn new(options:~FuseMountOptions,ops:~FuseLowLevelOps:Send+Freeze)
+               -> ~FuseMount {
         // The C API needs its own OS thread because it will block.  We want to
-        // run all of the filesystem commands we get in "parallel" on their own
+        // run all of the filesystem commands we get in parallel on their own
         // rust tasks, but we don't want to spawn a new OS thread for each of
         // them.  So instead, we have this: the C API gets its own task on its
         // own OS thread, and does nothing but send commands through a chan to
@@ -257,7 +286,7 @@ impl FuseMount {
         c_api_task.opts.notify_chan = Some(finish_chan);
         let userdata = ~FuseUserData{
             args: args, 
-            ops:ops,
+            ops:Arc::new(ops),
             dispatch_chan:dispatch_chan,
             session_chan: session_chan,
             session: Cell::new_empty()
@@ -380,7 +409,7 @@ fn unmount_via_external_process(mount_point:&PosixPath) {
 // The FUSE userdata pointer will point to one of these.  The c extern fns
 // use it to get back into the correct corresponding rust tasks.
 struct FuseUserData {
-    ops: ~FuseLowLevelOps,
+    ops: Arc<~FuseLowLevelOps:Send+Freeze>,
     args: ~[~[u8]],
     // Send FS command functions through here to be dispatched to new tasks on
     // the right scheduler
@@ -435,7 +464,7 @@ pub fn c_api_loop(userdata:~FuseUserData) {
             fail!("Failed to mount");
         }
 
-        let llo = make_fuse_ll_oper(userdata.ops);
+        let llo = make_fuse_ll_oper(*userdata.ops.get());
         let fuse_session = fuse_lowlevel_new(
             ptr::to_mut_unsafe_ptr(&mut fuse_args),
             ptr::to_unsafe_ptr(&llo),
@@ -468,35 +497,36 @@ pub fn make_fuse_ll_oper(ops:&FuseLowLevelOps)
     return Struct_fuse_lowlevel_ops {
         init: Some(init_impl),
         destroy: Some(destroy_impl),
-        lookup: ops.lookup.map(|_| lookup_impl),
-        forget: ops.forget.map(|_| forget_impl),
-        getattr: ops.getattr.map(|_| getattr_impl),
-        setattr: ops.setattr.map(|_| setattr_impl),
-        readlink: ops.readlink.map(|_| readlink_impl),
-        mknod: ops.mknod.map(|_| mknod_impl),
-        mkdir: ops.mkdir.map(|_| mkdir_impl),
-        unlink: ops.unlink.map(|_| unlink_impl),
-        rmdir: ops.rmdir.map(|_| rmdir_impl),
-        symlink: ops.symlink.map(|_| symlink_impl),
-        rename: ops.rename.map(|_| rename_impl),
-        link: ops.link.map(|_| link_impl),
-        open: ops.open.map(|_| open_impl),
-        read: ops.read.map(|_| read_impl),
-        write: ops.write.map(|_| write_impl),
-        flush: ops.flush.map(|_| flush_impl),
-        release: ops.release.map(|_| release_impl),
-        fsync: ops.fsync.map(|_| fsync_impl),
-        opendir: ops.opendir.map(|_| opendir_impl),
-        readdir: ops.readdir.map(|_| readdir_impl),
-        releasedir: ops.releasedir.map(|_| releasedir_impl),
-        fsyncdir: ops.fsyncdir.map(|_| fsyncdir_impl),
-        statfs: ops.statfs.map(|_| statfs_impl),
-        setxattr: ops.setxattr.map(|_| setxattr_impl),
-        getxattr: ops.getxattr.map(|_| getxattr_impl),
-        listxattr: ops.listxattr.map(|_| listxattr_impl),
-        removexattr: ops.removexattr.map(|_| removexattr_impl),
-        access: ops.access.map(|_| access_impl),
-        create: ops.create.map(|_| create_impl),
+
+        lookup: if ops.lookup_is_implemented() { Some(lookup_impl) } else { None },
+        forget: if ops.forget_is_implemented() { Some(forget_impl) } else { None },
+        getattr: if ops.getattr_is_implemented() { Some(getattr_impl) } else { None },
+        setattr: if ops.setattr_is_implemented() { Some(setattr_impl) } else { None },
+        readlink: if ops.readlink_is_implemented() { Some(readlink_impl) } else { None },
+        mknod: if ops.mknod_is_implemented() { Some(mknod_impl) } else { None },
+        mkdir: if ops.mkdir_is_implemented() { Some(mkdir_impl) } else { None },
+        unlink: if ops.unlink_is_implemented() { Some(unlink_impl) } else { None },
+        rmdir: if ops.rmdir_is_implemented() { Some(rmdir_impl) } else { None },
+        symlink: if ops.symlink_is_implemented() { Some(symlink_impl) } else { None },
+        rename: if ops.rename_is_implemented() { Some(rename_impl) } else { None },
+        link: if ops.link_is_implemented() { Some(link_impl) } else { None },
+        open: if ops.open_is_implemented() { Some(open_impl) } else { None },
+        read: if ops.read_is_implemented() { Some(read_impl) } else { None },
+        write: if ops.write_is_implemented() { Some(write_impl) } else { None },
+        flush: if ops.flush_is_implemented() { Some(flush_impl) } else { None },
+        release: if ops.release_is_implemented() { Some(release_impl) } else { None },
+        fsync: if ops.fsync_is_implemented() { Some(fsync_impl) } else { None },
+        opendir: if ops.opendir_is_implemented() { Some(opendir_impl) } else { None },
+        readdir: if ops.readdir_is_implemented() { Some(readdir_impl) } else { None },
+        releasedir: if ops.releasedir_is_implemented() { Some(releasedir_impl) } else { None },
+        fsyncdir: if ops.fsyncdir_is_implemented() { Some(fsyncdir_impl) } else { None },
+        statfs: if ops.statfs_is_implemented() { Some(statfs_impl) } else { None },
+        setxattr: if ops.setxattr_is_implemented() { Some(setxattr_impl) } else { None },
+        getxattr: if ops.getxattr_is_implemented() { Some(getxattr_impl) } else { None },
+        listxattr: if ops.listxattr_is_implemented() { Some(listxattr_impl) } else { None },
+        removexattr: if ops.removexattr_is_implemented() { Some(removexattr_impl) } else { None },
+        access: if ops.access_is_implemented() { Some(access_impl) } else { None },
+        create: if ops.create_is_implemented() { Some(create_impl) } else { None },
 
         // Not implemented yet:
         getlk: None,
@@ -519,10 +549,10 @@ fn userdata_ptr_from_req(req:fuse_req_t) -> *mut c_void {
 }
 
 /*
- * Run a function with a borrowed pointer to the FuseLowLevelOps struct pointed
- * to by the given userdata pointer.  The "arg" parameter is for passing extra
- * data into the function a la task::spawn_with (needed to push owned pointers
- * into the closure)
+ * Run a function with a borrowed pointer to the Ops pointed to by the given
+ * userdata pointer.  The "arg" parameter is for passing extra data into the
+ * function a la task::spawn_with (needed to push owned pointers into the
+ * closure)
  */
 fn userdata_from_ptr<T, U>(userdata_ptr:*mut c_void, arg:T,
                          func:&fn(&FuseUserData, T) -> U) -> U {
@@ -571,7 +601,7 @@ fn run_for_reply<T>(req:fuse_req_t, reply_success:ReplySuccessFn<T>,
                     do_op:~fn(&FuseLowLevelOps) -> ErrnoResult<T>) {
     do send_to_dispatch(req, (do_op, reply_success))
         |userdata, (do_op, reply_success)| {
-        send_fuse_reply(do_op(&(*userdata.ops)), req, reply_success);
+        send_fuse_reply(do_op(*userdata.ops.get()), req, reply_success);
     }
 }
 
@@ -731,62 +761,36 @@ fn reply_xattr(req: fuse_req_t, size: size_t) {
     }
 }
 
-fn handle_unimpl<F, T>(opt:&Option<F>, name:&str, 
-                       imp:&fn(&F) -> ErrnoResult<T>) -> ErrnoResult<T> {
-    match *opt {
-        Some(ref f) => imp(f),
-        None => {
-            error!("FUSE called %s, but there was no fn supplied.  This is a bug in rust_fuse.",
-                   name);
-            Err(libc::ENOSYS)
-        }
-    }
-}
-
 extern fn init_impl(userdata:*mut c_void, _conn:*Struct_fuse_conn_info) {
     do userdata_from_ptr(userdata, ()) |userdata, _| {
-        match userdata.ops.init {
-            Some(ref f) => (*f)(),
-            None=>()
-        }
+        (*userdata.ops.get()).init();
         userdata.session_chan.send(userdata.session.take());
     }
 }
 
 extern fn destroy_impl(userdata:*mut c_void) {
     do userdata_from_ptr(userdata, ()) |userdata, _| {
-        match userdata.ops.destroy {
-            Some(ref f) => (*f)(),
-            None=>()
-        }
+        userdata.ops.get().destroy();
     }
 }
 
-macro_rules! run_for_reply_if_impl {
-    ($opfunc:ident, $replyfunc:expr, $body:block) => (
-        do run_for_reply(req, $replyfunc) |ops| {
-            do handle_unimpl(&ops.$opfunc, stringify!($opfunc)) |f|
-                $body
-        })
-}
-
 extern fn lookup_impl(req:fuse_req_t,  parent:fuse_ino_t, name:*c_schar) {
-    run_for_reply_if_impl!(lookup, reply_entryparam, {
-            unsafe { (*f)(parent, &CString::new(name, false)) }
-        })
+    do run_for_reply(req, reply_entryparam) |ops| {
+        unsafe { ops.lookup(parent, &CString::new(name, false)) }
+    }
 }
 
 extern fn forget_impl(req: fuse_req_t, ino: fuse_ino_t, nlookup:c_ulong) {
-    run_for_reply_if_impl!(forget, reply_none, {
-            (*f)(ino, nlookup); Ok(())
-        })
+    do run_for_reply(req, reply_none) |ops| {
+        ops.forget(ino, nlookup); Ok(())            
+    }
 }
 
 extern fn getattr_impl(req:fuse_req_t, ino: fuse_ino_t,
                        _fi:*Struct_fuse_file_info) {
-    run_for_reply_if_impl!(getattr, reply_attr, {
-            (*f)(ino)
-        })
+    do run_for_reply(req, reply_attr) |ops| {
+        ops.getattr(ino)
+    }
 }
 
 extern fn setattr_impl(req: fuse_req_t, ino: fuse_ino_t, attr:*libc::stat,
@@ -799,250 +803,250 @@ extern fn setattr_impl(req: fuse_req_t, ino: fuse_ino_t, attr:*libc::stat,
     static FUSE_SET_ATTR_MTIME:int = (1 << 5);
     static FUSE_SET_ATTR_ATIME_NOW:int = (1 << 7);
     static FUSE_SET_ATTR_MTIME_NOW:int = (1 << 8);
-    run_for_reply_if_impl!(setattr, reply_attr, {
-            unsafe {
-                let mut attrs_to_set:~[AttrToSet] = vec::with_capacity(8);
-                if to_set & FUSE_SET_ATTR_MODE != 0 {
-                    attrs_to_set.push(Mode((*attr).st_mode))
-                }
-                if to_set & FUSE_SET_ATTR_UID != 0 {
-                    attrs_to_set.push(Uid((*attr).st_uid))
-                }
-                if to_set & FUSE_SET_ATTR_GID != 0 {
-                    attrs_to_set.push(Gid((*attr).st_gid))
-                }
-                if to_set & FUSE_SET_ATTR_SIZE != 0 {
-                    attrs_to_set.push(Size((*attr).st_size))
-                }
-                if to_set & FUSE_SET_ATTR_ATIME != 0 {
-                    attrs_to_set.push(Atime((*attr).st_atime))
-                }
-                if to_set & FUSE_SET_ATTR_MTIME != 0 {
-                    attrs_to_set.push(Mtime((*attr).st_mtime))
-                }
-                if to_set & FUSE_SET_ATTR_ATIME_NOW != 0 {
-                    attrs_to_set.push(Atime_now)
-                }
-                if to_set & FUSE_SET_ATTR_MTIME_NOW != 0 {
-                    attrs_to_set.push(Mtime_now)
-                }
-
-                (*f)(ino, attrs_to_set, fi.to_option().map(|fi| fi.fh))
+    do run_for_reply(req, reply_attr) |ops| {
+        unsafe {
+            let mut attrs_to_set:~[AttrToSet] = vec::with_capacity(8);
+            if to_set & FUSE_SET_ATTR_MODE != 0 {
+                attrs_to_set.push(Mode((*attr).st_mode))
             }
-        })
+            if to_set & FUSE_SET_ATTR_UID != 0 {
+                attrs_to_set.push(Uid((*attr).st_uid))
+            }
+            if to_set & FUSE_SET_ATTR_GID != 0 {
+                attrs_to_set.push(Gid((*attr).st_gid))
+            }
+            if to_set & FUSE_SET_ATTR_SIZE != 0 {
+                attrs_to_set.push(Size((*attr).st_size))
+            }
+            if to_set & FUSE_SET_ATTR_ATIME != 0 {
+                attrs_to_set.push(Atime((*attr).st_atime))
+            }
+            if to_set & FUSE_SET_ATTR_MTIME != 0 {
+                attrs_to_set.push(Mtime((*attr).st_mtime))
+            }
+            if to_set & FUSE_SET_ATTR_ATIME_NOW != 0 {
+                attrs_to_set.push(Atime_now)
+            }
+            if to_set & FUSE_SET_ATTR_MTIME_NOW != 0 {
+                attrs_to_set.push(Mtime_now)
+            }
+            ops.setattr(ino, attrs_to_set, fi.to_option().map(|fi| fi.fh))
+        }
+        
+    }
 }
 
 extern fn readlink_impl(req: fuse_req_t, ino: fuse_ino_t) {
-    run_for_reply_if_impl!(readlink, reply_readlink, {
-            (*f)(ino)
-        })
+    do run_for_reply(req, reply_readlink) |ops| {
+        ops.readlink(ino)
+    }
 }
 
 extern fn mknod_impl(req:fuse_req_t, parent: fuse_ino_t, name:*c_schar,
                      mode: mode_t, rdev: dev_t) {
-    run_for_reply_if_impl!(mknod, reply_entryparam, {
-            unsafe { (*f)(parent, &CString::new(name,false), mode, rdev) }
-        })
+    do run_for_reply(req, reply_entryparam) |ops| {
+        unsafe { ops.mknod(parent, &CString::new(name,false), mode, rdev) }
+    }
 }
 
 extern fn mkdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar,
                      mode:mode_t) {
-    run_for_reply_if_impl!(mkdir, reply_entryparam, {
-            unsafe { (*f)(parent, &CString::new(name,false), mode) }
-        })
+    do run_for_reply(req, reply_entryparam) |ops| {
+        unsafe { ops.mkdir(parent, &CString::new(name,false), mode) }        
+    }
 }
 
 extern fn unlink_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
-    run_for_reply_if_impl!(unlink, reply_zero_err, {
-            unsafe { (*f)(parent, &CString::new(name,false)) }
-        })
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe { ops.unlink(parent, &CString::new(name,false)) }        
+    }
 }
 
 extern fn rmdir_impl(req: fuse_req_t, parent: fuse_ino_t, name:*c_schar) {
-    run_for_reply_if_impl!(rmdir, reply_zero_err, {
-            unsafe { (*f)(parent, &CString::new(name,false)) }
-        })
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe { ops.rmdir(parent, &CString::new(name,false)) }
+    }
 }
 
 extern fn symlink_impl(req: fuse_req_t, link: *c_schar, parent: fuse_ino_t,
                        name: *c_schar) {
-    run_for_reply_if_impl!(symlink, reply_entryparam, {
-            unsafe {
-                (*f)(&CString::new(link,false), parent, 
-                     &CString::new(name,false))
-            }
-        })
+    do run_for_reply(req, reply_entryparam) |ops| {
+        unsafe {
+            ops.symlink(&CString::new(link,false), parent, 
+                        &CString::new(name,false))
+        }        
+    }
 }
 
 extern fn rename_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar,
                       newparent: fuse_ino_t, newname: *c_schar) {
-    run_for_reply_if_impl!(rename, reply_zero_err, {
-            unsafe {
-                (*f)(parent, &CString::new(name,false), newparent,
-                     &CString::new(newname,false))
-            }
-        })
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.rename(parent, &CString::new(name,false), newparent,
+                       &CString::new(newname,false))
+        }        
+    }
 }
 
 extern fn link_impl(req: fuse_req_t, ino: fuse_ino_t, newparent: fuse_ino_t,
                     newname: *c_schar) {
-    run_for_reply_if_impl!(link, reply_entryparam, {
-            unsafe {
-                (*f)(ino, newparent, &CString::new(newname,false))
-            }
-        })
+    do run_for_reply(req, reply_entryparam) |ops| {
+        unsafe {
+            ops.link(ino, newparent, &CString::new(newname,false))
+        }        
+    }
 }
 
 extern fn open_impl(req: fuse_req_t, ino: fuse_ino_t,
                     fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(open, reply_open, {
-            unsafe {
-                (*f)(ino, (*fi).flags)
-            }
-        })
+    do run_for_reply(req, reply_open) |ops| {
+        unsafe {
+            ops.open(ino, (*fi).flags)
+        }        
+    }
 }
 
 extern fn read_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t, off: off_t,
                     fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(read, reply_read, {
-            unsafe {
-                (*f)(ino, size, off, (*fi).fh)
-            }
-        })
+    do run_for_reply(req, reply_read) |ops| {
+        unsafe {
+            ops.read(ino, size, off, (*fi).fh)
+        }        
+    }
 }
 
 extern fn write_impl(req: fuse_req_t, ino: fuse_ino_t, buf: *u8,
                      size: size_t, off: off_t, fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(write, reply_write, {
-            unsafe {
-                do vec::raw::buf_as_slice(buf, size as uint) |vec| {
-                    (*f)(ino, vec, off, (*fi).fh, ((*fi).writepage != 0))
-                }
+    do run_for_reply(req, reply_write) |ops| {
+        unsafe {
+            do vec::raw::buf_as_slice(buf, size as uint) |vec| {
+                ops.write(ino, vec, off, (*fi).fh, ((*fi).writepage != 0))
             }
-        })
+        }        
+    }
 }
 
 extern fn flush_impl(req: fuse_req_t, ino: fuse_ino_t,
                      fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(flush, reply_zero_err, {
-            unsafe {
-                (*f)(ino, (*fi).lock_owner, (*fi).fh)
-            }
-        })
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.flush(ino, (*fi).lock_owner, (*fi).fh)
+        }        
+    }
 }
 
 extern fn release_impl(req: fuse_req_t, ino: fuse_ino_t,
                        fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(release, reply_zero_err, {
-            unsafe {
-                (*f)(ino, (*fi).flags, (*fi).fh)
-            }
-        })
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.release(ino, (*fi).flags, (*fi).fh)
+        }        
+    }
 }
 
 extern fn fsync_impl(req: fuse_req_t, ino: fuse_ino_t, datasync: c_int,
                      fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(fsync, reply_zero_err, {
-            unsafe {
-                (*f)(ino, (datasync != 0), (*fi).fh)
-            }
-        })
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.fsync(ino, (datasync != 0), (*fi).fh)
+        }
+    }
 }
 
 extern fn opendir_impl(req: fuse_req_t, ino: fuse_ino_t,
                        _fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(opendir, reply_open, {
-            (*f)(ino)
-        })
+    do run_for_reply(req, reply_open) |ops| {
+        ops.opendir(ino)
+    }
 }
 
 extern fn readdir_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t,
                        off: off_t, fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(readdir, reply_readdir, {
-            unsafe {
-                (*f)(ino, size, off, (*fi).fh)
-            }.and_then(|rr| Ok((size, rr)))
-        })
+    do run_for_reply(req, reply_readdir) |ops| {
+        unsafe {
+            ops.readdir(ino, size, off, (*fi).fh)
+        }.and_then(|rr| Ok((size, rr)))
+    }
 }
 
 extern fn releasedir_impl(req: fuse_req_t, ino: fuse_ino_t,
                           fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(releasedir, reply_zero_err, {
-            unsafe {
-                (*f)(ino, (*fi).fh)
-            }
-        })
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.releasedir(ino, (*fi).fh)
+        }
+    }
 }
 
 extern fn fsyncdir_impl(req: fuse_req_t, ino: fuse_ino_t, datasync: c_int,
                         fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(fsyncdir, reply_zero_err, {
-            unsafe {
-                (*f)(ino, (datasync != 0), (*fi).fh)
-            }
-        })
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            ops.fsyncdir(ino, (datasync != 0), (*fi).fh)
+        }
+    }
 }
 
 extern fn statfs_impl(req: fuse_req_t, ino: fuse_ino_t) {
-    run_for_reply_if_impl!(statfs, reply_statfs, {
-            (*f)(ino)
-        })
+    do run_for_reply(req, reply_statfs) |ops| {
+        ops.statfs(ino)
+    }
 }
 
 extern fn setxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
                         value: *u8, size: size_t, flags: c_int) {
-    run_for_reply_if_impl!(setxattr, reply_zero_err, {
-            unsafe {
-                do vec::raw::buf_as_slice(value, size as uint) |vec| {
-                    (*f)(ino, &CString::new(name,false), vec, flags)
-                }
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe {
+            do vec::raw::buf_as_slice(value, size as uint) |vec| {
+                ops.setxattr(ino, &CString::new(name,false), vec, flags)
             }
-        })
+        }
+    }
 }
 
 extern fn getxattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar,
                         size: size_t) {
     if size == 0 {
-        run_for_reply_if_impl!(getxattr_size, reply_xattr, {
-                unsafe { (*f)(ino, &CString::new(name,false)) }
-            })
+        do run_for_reply(req, reply_xattr) |ops| {
+            unsafe { ops.getxattr_size(ino, &CString::new(name,false)) }
+        }
     } else {
-        run_for_reply_if_impl!(getxattr, reply_read, {
-                unsafe { (*f)(ino, &CString::new(name,false), size) }
-            })
+        do run_for_reply(req, reply_read) |ops| {
+            unsafe { ops.getxattr(ino, &CString::new(name,false), size) }
+        }
     }
 }
 
 extern fn listxattr_impl(req: fuse_req_t, ino: fuse_ino_t, size: size_t) {
     if size == 0 {
-        run_for_reply_if_impl!(listxattr_size, reply_xattr, {
-                (*f)(ino)
-            })
+        do run_for_reply(req, reply_xattr) |ops| {
+            ops.listxattr_size(ino)
+        }
     } else {
-        run_for_reply_if_impl!(listxattr, reply_read, {
-                (*f)(ino, size)
-            })
+        do run_for_reply(req, reply_read) |ops| {
+            ops.listxattr(ino, size)
+        }
     }
 }
 
 extern fn removexattr_impl(req: fuse_req_t, ino: fuse_ino_t, name: *c_schar) {
-    run_for_reply_if_impl!(removexattr, reply_zero_err, {
-            unsafe { (*f)(ino, &CString::new(name,false)) }
-        })
+    do run_for_reply(req, reply_zero_err) |ops| {
+        unsafe { ops.removexattr(ino, &CString::new(name,false)) }       
+    }
 }
 
 extern fn access_impl(req: fuse_req_t,
                       ino: fuse_ino_t, mask: c_int) {
-    run_for_reply_if_impl!(access, reply_zero_err, {
-            (*f)(ino, mask)
-        })
+    do run_for_reply(req, reply_zero_err) |ops| {
+        ops.access(ino, mask)
+    }
 }
 
 extern fn create_impl(req: fuse_req_t, parent: fuse_ino_t, name: *c_schar,
                       mode: mode_t, fi: *Struct_fuse_file_info) {
-    run_for_reply_if_impl!(create, reply_create, {
-            unsafe {
-                (*f)(parent, &CString::new(name,false), mode, (*fi).flags)
-            }
-        })
+    do run_for_reply(req, reply_create) |ops| {
+        unsafe {
+            ops.create(parent, &CString::new(name,false), mode, (*fi).flags)
+        }
+    }
 }

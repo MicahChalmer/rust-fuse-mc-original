@@ -14,9 +14,9 @@ fn hello_fs_works() {
     let mount_args = ~["hello_fs".as_bytes().to_owned(),
                        path_str.as_bytes().to_owned()];
     // The first argument is for the executable
-    let _mounter = FuseMount::new(~FuseMountOptions{args:mount_args,
-                                                    ..Default::default()},
-                                  super::testfs::hello::hello_fs());
+    let _mounter = FuseMount::new(~FuseMountOptions{args:mount_args},
+                                  ~super::testfs::hello::HelloFs as
+                                  ~FuseLowLevelOps:Send+Freeze);
     
     let expected_dirs = [~"hello_from_rust"];
     let mut edirs_map = expected_dirs.iter().map(|x| x.clone());

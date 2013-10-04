@@ -30,9 +30,8 @@ The modules:
 
 There are some problems with it as it exists now:
 
-  * That unfortunate struct of `Option<fn...>`s.  It really should be a trait...but I can't see how, at least not without resorting to even worse hacks than what I ended up with.
+  * Having the corresponding `_is_implemented` functions for all the FS operation functions in the `FuseLowLevelOps` trait sucks, but I don't know what else to do about it.  (See the comment in the code in lowlevel.rs for why it's necessary.)
   * The APIs for some specific FS calls are not quite right.  These are marked with TODO in src/rust_fuse/lowlevel.rs.
-  * I'm still not sure I got the unsafe handling of pointers to the FuseMount and FuseUserData structures right.  There may be some edge cases where the API will cause supposedly safe and valid API use to access memory in an invalid way.
 
 ## TEMPORARY WORKAROUNDS FOR KNOWN RUST ISSUES
 
