@@ -62,13 +62,15 @@ pub enum AttrToSet {
     Atime(time_t),
     Mtime(time_t),
 
-    // TODO: confirm assumption about what these mean
+    /// This is an instruction to set atime to the current time
     Atime_now,
+
+    /// This is an instruction to set mtime to the current time
     Mtime_now,
 }
 
 pub enum ReadReply {
-    // TODO: support iov and fuse_bufvec type replies for more efficient (?)
+    // TODO: support iov and fuse_bufvec type replies
     // types of implementation
     DataBuffer(~[u8]),
     EOF
@@ -155,8 +157,6 @@ pub trait FuseLowLevelOps {
     fn read(&self, _ino: fuse_ino_t, _size: size_t, _off: off_t, _fh: u64)
             -> ErrnoResult<ReadReply> { fail!() }
     fn read_is_implemented(&self) -> bool { false }
-    // _TODO: is writepage a bool, or an actual number that needs to be
-    // preserved?
     fn write(&self, _ino: fuse_ino_t, _buf:&[u8], _off: off_t, _fh: u64, _writepage: bool)
              -> ErrnoResult<size_t> { fail!() }
     fn write_is_implemented(&self) -> bool { false }
@@ -207,7 +207,7 @@ pub trait FuseLowLevelOps {
     fn create(&self, _parent: fuse_ino_t, _name: &CString, _mode: mode_t, _flags: c_int)
               -> ErrnoResult<CreateReply> { fail!() }
     fn create_is_implemented(&self) -> bool { false }
-    // _TODO: The following, still need _implementing:
+    // _TODO: The following still need _implementing:
     //
     // getlk
     // setlk
